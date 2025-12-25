@@ -304,6 +304,7 @@ a:hover {
 
 /* ===== Upload Section ===== */
 .upload-area {
+    display: block;
     border: 2px dashed var(--border);
     border-radius: var(--radius);
     padding: 40px 20px;
@@ -519,6 +520,62 @@ a:hover {
     font-size: 0.85rem;
     color: var(--text-muted);
     margin-top: 4px;
+}
+
+/* Pitch Accuracy Meter */
+.pitch-meter {
+    margin: 16px 0;
+    text-align: center;
+}
+
+.pitch-labels {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.pitch-track {
+    position: relative;
+    height: 8px;
+    background: var(--border);
+    border-radius: 4px;
+    overflow: visible;
+}
+
+.pitch-center {
+    position: absolute;
+    left: 50%;
+    top: -2px;
+    width: 2px;
+    height: 12px;
+    background: var(--text-muted);
+    transform: translateX(-50%);
+    border-radius: 1px;
+}
+
+.pitch-indicator {
+    position: absolute;
+    top: -4px;
+    left: 50%;
+    width: 16px;
+    height: 16px;
+    background: var(--text-muted);
+    border-radius: 50%;
+    transform: translateX(-50%);
+    transition: left 0.1s ease, background 0.2s ease;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+
+.pitch-cents {
+    margin-top: 8px;
+    font-family: 'SF Mono', Monaco, monospace;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text-muted);
 }
 
 .stability-bar {

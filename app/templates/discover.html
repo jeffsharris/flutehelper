@@ -121,6 +121,19 @@
                                 <div class="note-freq" id="detected-freq">-- Hz</div>
                             </div>
 
+                            <!-- Pitch accuracy meter -->
+                            <div class="pitch-meter">
+                                <div class="pitch-labels">
+                                    <span>flat</span>
+                                    <span>sharp</span>
+                                </div>
+                                <div class="pitch-track">
+                                    <div class="pitch-center"></div>
+                                    <div class="pitch-indicator" id="pitch-indicator"></div>
+                                </div>
+                                <div class="pitch-cents" id="pitch-cents">--</div>
+                            </div>
+
                             <div class="stability-bar">
                                 <div class="stability-fill" id="stability-bar"></div>
                             </div>
@@ -498,6 +511,7 @@
                 document.getElementById('detected-freq').textContent = '-- Hz';
                 document.getElementById('stability-bar').style.width = '0%';
                 document.getElementById('stability-text').textContent = 'Below threshold';
+                resetPitchMeter();
                 requestAnimationFrame(detectPitch);
                 return;
             }
@@ -508,6 +522,11 @@
                 const note = frequencyToNote(freq);
                 document.getElementById('detected-note').textContent = note;
                 document.getElementById('detected-freq').textContent = freq.toFixed(1) + ' Hz';
+
+                // Calculate cents deviation
+                const idealFreq = noteFreqs[note];
+                const cents = 1200 * Math.log2(freq / idealFreq);
+                updatePitchMeter(cents);
 
                 const now = Date.now();
                 if (note === lastDetectedNote) {
@@ -579,6 +598,42 @@
                 if (diff < minDiff) { minDiff = diff; closest = note; }
             }
             return closest;
+        }
+
+        function updatePitchMeter(cents) {
+            const indicator = document.getElementById('pitch-indicator');
+            const centsDisplay = document.getElementById('pitch-cents');
+
+            // Clamp cents to -50 to +50 for display
+            const clampedCents = Math.max(-50, Math.min(50, cents));
+
+            // Convert to percentage (0% = -50 cents, 50% = 0 cents, 100% = +50 cents)
+            const position = ((clampedCents + 50) / 100) * 100;
+            indicator.style.left = position + '%';
+
+            // Color based on accuracy (green = in tune, yellow/red = out of tune)
+            const absCents = Math.abs(cents);
+            let color;
+            if (absCents < 5) {
+                color = 'var(--success)'; // In tune
+            } else if (absCents < 15) {
+                color = 'var(--warning)'; // Slightly off
+            } else {
+                color = 'var(--error)'; // Out of tune
+            }
+            indicator.style.background = color;
+
+            // Display cents value
+            const sign = cents >= 0 ? '+' : '';
+            centsDisplay.textContent = sign + Math.round(cents) + '¢';
+            centsDisplay.style.color = color;
+        }
+
+        function resetPitchMeter() {
+            document.getElementById('pitch-indicator').style.left = '50%';
+            document.getElementById('pitch-indicator').style.background = 'var(--text-muted)';
+            document.getElementById('pitch-cents').textContent = '--';
+            document.getElementById('pitch-cents').style.color = 'var(--text-muted)';
         }
 
         // Clear locked note
