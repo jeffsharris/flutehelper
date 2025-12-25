@@ -197,7 +197,6 @@ async def upload_sheet_music(
             fingering_data = profile_fingerings.get(note_key)
 
             results.append({
-                "note": note,
                 "note_key": note_key,
                 "fingering": fingering_data.get("fingering") if fingering_data else None,
                 "playable": fingering_data is not None
