@@ -83,9 +83,28 @@
                     </div>
                 </div>
 
-                <div id="loading" class="htmx-indicator loading">
-                    <div class="spinner"></div>
-                    <p>Analyzing sheet music...</p>
+                <div id="loading" class="htmx-indicator">
+                    <div class="progress-stages">
+                        <div class="progress-stage active" id="stage-1">
+                            <div class="stage-icon">
+                                <div class="spinner-small"></div>
+                            </div>
+                            <div class="stage-text">Uploading image...</div>
+                        </div>
+                        <div class="progress-stage" id="stage-2">
+                            <div class="stage-icon">
+                                <div class="stage-dot"></div>
+                            </div>
+                            <div class="stage-text">Analyzing sheet music with AI...</div>
+                        </div>
+                        <div class="progress-stage" id="stage-3">
+                            <div class="stage-icon">
+                                <div class="stage-dot"></div>
+                            </div>
+                            <div class="stage-text">Mapping notes to fingerings...</div>
+                        </div>
+                    </div>
+                    <p class="progress-note">This may take 10-20 seconds</p>
                 </div>
             </form>
         </div>
@@ -155,6 +174,49 @@
             toast.classList.add('show');
             setTimeout(() => toast.classList.remove('show'), 3000);
         }
+
+        // Progress stages animation
+        let stageInterval = null;
+
+        document.body.addEventListener('htmx:beforeRequest', function(e) {
+            if (e.detail.elt.id === 'upload-form') {
+                // Reset stages
+                document.querySelectorAll('.progress-stage').forEach((s, i) => {
+                    s.classList.remove('active', 'complete');
+                    if (i === 0) s.classList.add('active');
+                });
+
+                // Animate through stages
+                let currentStage = 1;
+                stageInterval = setInterval(() => {
+                    if (currentStage < 3) {
+                        // Mark current as complete
+                        const current = document.getElementById('stage-' + currentStage);
+                        current.classList.remove('active');
+                        current.classList.add('complete');
+
+                        // Activate next
+                        currentStage++;
+                        const next = document.getElementById('stage-' + currentStage);
+                        next.classList.add('active');
+                    }
+                }, 3000); // Move to next stage every 3 seconds
+            }
+        });
+
+        document.body.addEventListener('htmx:afterRequest', function(e) {
+            if (e.detail.elt.id === 'upload-form') {
+                // Clear interval and mark all complete
+                if (stageInterval) {
+                    clearInterval(stageInterval);
+                    stageInterval = null;
+                }
+                document.querySelectorAll('.progress-stage').forEach(s => {
+                    s.classList.remove('active');
+                    s.classList.add('complete');
+                });
+            }
+        });
     </script>
 </body>
 </html>
