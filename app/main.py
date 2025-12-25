@@ -223,6 +223,7 @@ async def upload_sheet_music(
                 "transposition_reasoning": ai_suggestion.transposition_reasoning,
                 "musical_notes": ai_suggestion.musical_notes,
                 "ocr_corrections": ai_suggestion.ocr_corrections,
+                "reasoning_summary": ai_suggestion.reasoning_summary,
                 "results": ai_results,
                 "confidence": extracted_music.confidence,
                 "note_count": len(ai_results),

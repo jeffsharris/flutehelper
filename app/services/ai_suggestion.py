@@ -32,6 +32,7 @@ class AISuggestion:
     original_key: Optional[str] = None  # Original key signature
     suggested_key: Optional[str] = None  # Key after transposition
     ocr_corrections: Optional[str] = None  # Description of any OCR errors corrected
+    reasoning_summary: Optional[str] = None  # AI's reasoning process summary
 
 
 class AISuggestionService:
@@ -80,42 +81,47 @@ class AISuggestionService:
             extracted_music.title
         )
 
-        # Build message content - include image if available
-        user_content = []
+        # Build input content for Responses API - include image if available
+        input_content = []
 
         if image_path:
             # Add the original image for visual verification
             image_data = self._encode_image(image_path)
             media_type = self._get_media_type(image_path)
-            user_content.append({
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:{media_type};base64,{image_data}"
-                }
+            input_content.append({
+                "type": "input_image",
+                "image_url": f"data:{media_type};base64,{image_data}"
             })
 
-        user_content.append({
-            "type": "text",
+        input_content.append({
+            "type": "input_text",
             "text": prompt
         })
 
-        response = self.client.chat.completions.create(
+        # Use Responses API with reasoning for better intelligence
+        response = self.client.responses.create(
             model=self.model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are a music arrangement expert specializing in Native American flute. You help adapt sheet music to work within the limited note range of these instruments while preserving the musical character of the piece."
-                },
-                {
-                    "role": "user",
-                    "content": user_content
-                }
-            ],
-            max_completion_tokens=4096,
+            instructions="You are a music arrangement expert specializing in Native American flute. You help adapt sheet music to work within the limited note range of these instruments while preserving the musical character of the piece.",
+            input=[{
+                "role": "user",
+                "content": input_content
+            }],
+            reasoning={"effort": "high", "summary": "detailed"},
+            max_output_tokens=4096,
         )
 
-        response_text = response.choices[0].message.content
-        return self._parse_response(response_text, extracted_music.key_signature)
+        # Extract reasoning summary if available
+        reasoning_summary = None
+        for output_item in response.output:
+            if output_item.type == "reasoning" and output_item.summary:
+                # Collect all summary text
+                reasoning_summary = "\n".join(s.text for s in output_item.summary if s.text)
+                break
+
+        # Get the text response
+        response_text = response.output_text
+
+        return self._parse_response(response_text, extracted_music.key_signature, reasoning_summary)
 
     def _encode_image(self, image_path: str) -> str:
         """Read and base64 encode an image file."""
@@ -201,7 +207,8 @@ Return ONLY the JSON object, no other text or markdown formatting."""
     def _parse_response(
         self,
         response_text: str,
-        original_key: Optional[str]
+        original_key: Optional[str],
+        reasoning_summary: Optional[str] = None
     ) -> AISuggestion:
         """Parse the AI response into structured data."""
         # Clean up response (remove markdown code blocks if present)
@@ -225,7 +232,8 @@ Return ONLY the JSON object, no other text or markdown formatting."""
                     note_mappings=[],
                     musical_notes="Error processing AI suggestions. Please try again.",
                     original_key=original_key,
-                    suggested_key=original_key
+                    suggested_key=original_key,
+                    reasoning_summary=reasoning_summary
                 )
 
         # Parse note mappings
@@ -246,7 +254,8 @@ Return ONLY the JSON object, no other text or markdown formatting."""
             musical_notes=data.get("musical_notes", ""),
             original_key=original_key,
             suggested_key=data.get("suggested_key"),
-            ocr_corrections=data.get("ocr_corrections")
+            ocr_corrections=data.get("ocr_corrections"),
+            reasoning_summary=reasoning_summary
         )
 
 

@@ -56,6 +56,12 @@
             <span class="expand-icon">&#9660;</span>
         </summary>
         <div class="ai-reasoning-content">
+            {% if reasoning_summary %}
+            <div class="reasoning-section reasoning-process">
+                <strong>Reasoning Process:</strong>
+                <p>{{ reasoning_summary }}</p>
+            </div>
+            {% endif %}
             {% if ocr_corrections %}
             <div class="reasoning-section ocr-corrections">
                 <strong>OCR Corrections:</strong>
@@ -107,7 +113,7 @@
                     {% endfor %}
                 </svg>
                 <div class="result-fingering">
-                    {{ result.fingering | map('string') | map('replace', '1', '&#9679;') | map('replace', '0', '&#9675;') | join('') }}
+                    {% for hole in result.fingering %}{% if hole %}●{% else %}○{% endif %}{% endfor %}
                 </div>
             </div>
             {% else %}
