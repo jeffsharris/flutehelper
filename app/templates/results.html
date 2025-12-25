@@ -29,7 +29,7 @@
 
             {% if result.playable and result.fingering %}
             <div class="fingering-diagram">
-                <svg viewBox="0 0 40 140" class="flute-diagram">
+                <svg viewBox="0 0 40 170" class="flute-diagram">
                     <!-- Top 3 holes (left hand) -->
                     {% for i in range(3) %}
                     <circle cx="20" cy="{{ 20 + i * 25 }}"
@@ -38,12 +38,12 @@
                     {% endfor %}
 
                     <!-- Divider line between hands -->
-                    <line x1="5" y1="85" x2="35" y2="85"
+                    <line x1="5" y1="100" x2="35" y2="100"
                           stroke="#ccc" stroke-width="1" stroke-dasharray="2,2"/>
 
                     <!-- Bottom 3 holes (right hand) -->
                     {% for i in range(3, 6) %}
-                    <circle cx="20" cy="{{ 20 + i * 25 - 10 }}"
+                    <circle cx="20" cy="{{ 115 + (i - 3) * 25 }}"
                             r="10"
                             class="hole {% if result.fingering.holes[i] %}closed{% else %}open{% endif %}"/>
                     {% endfor %}
@@ -54,6 +54,17 @@
             <div class="not-playable-info">
                 <span class="warning-icon">&#9888;</span>
                 <p>{{ result.transposition_note or 'Out of range' }}</p>
+                {% if result.substitute_notes %}
+                <div class="substitutes">
+                    <span class="sub-label">Try:</span>
+                    {% for sub in result.substitute_notes %}
+                    <span class="sub-note" title="{{ sub.fingering.as_symbols if sub.fingering else '' }}">
+                        {{ sub.note_name }}
+                        <small>({{ '+' if sub.semitones_away > 0 else '' }}{{ sub.semitones_away }})</small>
+                    </span>
+                    {% endfor %}
+                </div>
+                {% endif %}
             </div>
             {% endif %}
         </div>

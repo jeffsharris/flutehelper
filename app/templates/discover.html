@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fingering Discovery - Flute Helper</title>
+    <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Fingering Discovery</h1>
+            <p>Discover new fingerings by playing your flute</p>
+            <p><a href="/" class="back-link">Back to Converter</a></p>
+        </header>
+
+        <main>
+            <div class="discover-layout">
+                <section class="fingering-input">
+                    <h2>1. Set Fingering</h2>
+                    <p class="help-text">Click holes to toggle open/closed</p>
+
+                    <div class="interactive-diagram">
+                        <svg viewBox="0 0 80 220" class="large-flute-diagram" id="fingering-svg">
+                            <!-- Left hand label -->
+                            <text x="60" y="50" class="hand-label">L</text>
+
+                            <!-- Top 3 holes (left hand) -->
+                            <circle cx="30" cy="30" r="18" class="hole closed" data-hole="0"/>
+                            <circle cx="30" cy="70" r="18" class="hole closed" data-hole="1"/>
+                            <circle cx="30" cy="110" r="18" class="hole closed" data-hole="2"/>
+
+                            <!-- Divider -->
+                            <line x1="5" y1="140" x2="55" y2="140" stroke="#ccc" stroke-width="2"/>
+
+                            <!-- Right hand label -->
+                            <text x="60" y="170" class="hand-label">R</text>
+
+                            <!-- Bottom 3 holes (right hand) -->
+                            <circle cx="30" cy="160" r="18" class="hole closed" data-hole="3"/>
+                            <circle cx="30" cy="200" r="18" class="hole closed" data-hole="4"/>
+                            <circle cx="30" cy="240" r="18" class="hole closed" data-hole="5"/>
+                        </svg>
+
+                        <div class="fingering-display">
+                            <span id="current-fingering">------</span>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="audio-capture">
+                    <h2>2. Play & Record</h2>
+                    <p class="help-text">Play the note on your flute while recording</p>
+
+                    <div class="record-controls">
+                        <button id="record-btn" class="record-btn">
+                            <span class="record-icon"></span>
+                            Start Recording
+                        </button>
+
+                        <div id="recording-status" class="recording-status hidden">
+                            <div class="pulse"></div>
+                            <span>Listening...</span>
+                        </div>
+                    </div>
+
+                    <div class="pitch-display">
+                        <div class="detected-note" id="detected-note">--</div>
+                        <div class="detected-freq" id="detected-freq">-- Hz</div>
+                        <div class="pitch-meter">
+                            <div class="pitch-bar" id="pitch-bar"></div>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="save-fingering">
+                    <h2>3. Save Fingering</h2>
+                    <p class="help-text">Associate this fingering with the detected note</p>
+
+                    <div class="save-preview">
+                        <div class="preview-item">
+                            <label>Fingering:</label>
+                            <span id="save-fingering">------</span>
+                        </div>
+                        <div class="preview-item">
+                            <label>Note:</label>
+                            <span id="save-note">--</span>
+                        </div>
+                    </div>
+
+                    <button id="save-btn" class="save-btn" disabled>Save Fingering</button>
+                    <div id="save-status" class="save-status"></div>
+                </section>
+            </div>
+
+            <section class="discovered-list">
+                <h2>Discovered Fingerings</h2>
+                <div id="fingering-list" class="fingering-list">
+                    <!-- Populated dynamically -->
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script>
+        // Fingering state
+        const holes = [true, true, true, true, true, true]; // true = closed
+        let detectedNote = null;
+        let detectedFreq = null;
+        let isRecording = false;
+        let audioContext = null;
+        let analyser = null;
+        let mediaStream = null;
+
+        // Note frequencies (A4 = 440Hz)
+        const noteFreqs = {
+            'C3': 130.81, 'C#3': 138.59, 'D3': 146.83, 'D#3': 155.56, 'E3': 164.81,
+            'F3': 174.61, 'F#3': 185.00, 'G3': 196.00, 'G#3': 207.65, 'A3': 220.00,
+            'A#3': 233.08, 'B3': 246.94,
+            'C4': 261.63, 'C#4': 277.18, 'D4': 293.66, 'D#4': 311.13, 'E4': 329.63,
+            'F4': 349.23, 'F#4': 369.99, 'G4': 392.00, 'G#4': 415.30, 'A4': 440.00,
+            'A#4': 466.16, 'B4': 493.88,
+            'C5': 523.25, 'C#5': 554.37, 'D5': 587.33, 'D#5': 622.25, 'E5': 659.25,
+            'F5': 698.46, 'F#5': 739.99, 'G5': 783.99, 'G#5': 830.61, 'A5': 880.00,
+            'A#5': 932.33, 'B5': 987.77,
+            'C6': 1046.50
+        };
+
+        // Initialize hole click handlers
+        document.querySelectorAll('.hole').forEach(hole => {
+            hole.addEventListener('click', () => {
+                const index = parseInt(hole.dataset.hole);
+                holes[index] = !holes[index];
+                hole.classList.toggle('closed', holes[index]);
+                hole.classList.toggle('open', !holes[index]);
+                updateFingeringDisplay();
+            });
+        });
+
+        function updateFingeringDisplay() {
+            const display = holes.map(h => h ? '●' : '○').join('');
+            document.getElementById('current-fingering').textContent = display;
+            document.getElementById('save-fingering').textContent = display;
+        }
+
+        // Audio recording and pitch detection
+        document.getElementById('record-btn').addEventListener('click', async () => {
+            if (isRecording) {
+                stopRecording();
+            } else {
+                await startRecording();
+            }
+        });
+
+        async function startRecording() {
+            try {
+                mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                analyser = audioContext.createAnalyser();
+                analyser.fftSize = 4096;
+
+                const source = audioContext.createMediaStreamSource(mediaStream);
+                source.connect(analyser);
+
+                isRecording = true;
+                document.getElementById('record-btn').textContent = 'Stop Recording';
+                document.getElementById('record-btn').classList.add('recording');
+                document.getElementById('recording-status').classList.remove('hidden');
+
+                detectPitch();
+            } catch (err) {
+                alert('Could not access microphone: ' + err.message);
+            }
+        }
+
+        function stopRecording() {
+            isRecording = false;
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+            }
+            if (audioContext) {
+                audioContext.close();
+            }
+            document.getElementById('record-btn').textContent = 'Start Recording';
+            document.getElementById('record-btn').classList.remove('recording');
+            document.getElementById('recording-status').classList.add('hidden');
+        }
+
+        function detectPitch() {
+            if (!isRecording) return;
+
+            const buffer = new Float32Array(analyser.fftSize);
+            analyser.getFloatTimeDomainData(buffer);
+
+            const freq = autoCorrelate(buffer, audioContext.sampleRate);
+
+            if (freq > 0) {
+                detectedFreq = freq;
+                detectedNote = frequencyToNote(freq);
+
+                document.getElementById('detected-freq').textContent = freq.toFixed(1) + ' Hz';
+                document.getElementById('detected-note').textContent = detectedNote;
+                document.getElementById('save-note').textContent = detectedNote;
+                document.getElementById('save-btn').disabled = false;
+
+                // Update pitch bar (visual feedback)
+                const cents = getCents(freq, detectedNote);
+                const barPosition = 50 + (cents / 50) * 50;
+                document.getElementById('pitch-bar').style.left = Math.max(0, Math.min(100, barPosition)) + '%';
+            }
+
+            requestAnimationFrame(detectPitch);
+        }
+
+        // Autocorrelation pitch detection
+        function autoCorrelate(buffer, sampleRate) {
+            const SIZE = buffer.length;
+            let rms = 0;
+
+            for (let i = 0; i < SIZE; i++) {
+                rms += buffer[i] * buffer[i];
+            }
+            rms = Math.sqrt(rms / SIZE);
+
+            if (rms < 0.01) return -1; // Not enough signal
+
+            let r1 = 0, r2 = SIZE - 1;
+            const threshold = 0.2;
+
+            for (let i = 0; i < SIZE / 2; i++) {
+                if (Math.abs(buffer[i]) < threshold) { r1 = i; break; }
+            }
+            for (let i = 1; i < SIZE / 2; i++) {
+                if (Math.abs(buffer[SIZE - i]) < threshold) { r2 = SIZE - i; break; }
+            }
+
+            const buf2 = buffer.slice(r1, r2);
+            const c = new Array(buf2.length).fill(0);
+
+            for (let i = 0; i < buf2.length; i++) {
+                for (let j = 0; j < buf2.length - i; j++) {
+                    c[i] += buf2[j] * buf2[j + i];
+                }
+            }
+
+            let d = 0;
+            while (c[d] > c[d + 1]) d++;
+
+            let maxval = -1, maxpos = -1;
+            for (let i = d; i < buf2.length; i++) {
+                if (c[i] > maxval) {
+                    maxval = c[i];
+                    maxpos = i;
+                }
+            }
+
+            let T0 = maxpos;
+
+            // Parabolic interpolation
+            const x1 = c[T0 - 1], x2 = c[T0], x3 = c[T0 + 1];
+            const a = (x1 + x3 - 2 * x2) / 2;
+            const b = (x3 - x1) / 2;
+            if (a) T0 = T0 - b / (2 * a);
+
+            return sampleRate / T0;
+        }
+
+        function frequencyToNote(freq) {
+            let minDiff = Infinity;
+            let closestNote = null;
+
+            for (const [note, noteFreq] of Object.entries(noteFreqs)) {
+                const diff = Math.abs(freq - noteFreq);
+                if (diff < minDiff) {
+                    minDiff = diff;
+                    closestNote = note;
+                }
+            }
+
+            return closestNote;
+        }
+
+        function getCents(freq, note) {
+            const noteFreq = noteFreqs[note];
+            return 1200 * Math.log2(freq / noteFreq);
+        }
+
+        // Save fingering
+        document.getElementById('save-btn').addEventListener('click', async () => {
+            if (!detectedNote) return;
+
+            const fingering = holes.map(h => h ? 1 : 0);
+
+            try {
+                const response = await fetch('/api/fingerings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        note: detectedNote,
+                        fingering: fingering,
+                        frequency: detectedFreq
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    document.getElementById('save-status').textContent = 'Saved!';
+                    document.getElementById('save-status').className = 'save-status success';
+                    loadDiscoveredFingerings();
+                } else {
+                    document.getElementById('save-status').textContent = result.error || 'Error saving';
+                    document.getElementById('save-status').className = 'save-status error';
+                }
+            } catch (err) {
+                document.getElementById('save-status').textContent = 'Error: ' + err.message;
+                document.getElementById('save-status').className = 'save-status error';
+            }
+
+            setTimeout(() => {
+                document.getElementById('save-status').textContent = '';
+            }, 3000);
+        });
+
+        // Load discovered fingerings
+        async function loadDiscoveredFingerings() {
+            try {
+                const response = await fetch('/api/fingerings');
+                const fingerings = await response.json();
+
+                const list = document.getElementById('fingering-list');
+                list.innerHTML = '';
+
+                for (const [note, data] of Object.entries(fingerings)) {
+                    const item = document.createElement('div');
+                    item.className = 'fingering-item';
+                    item.innerHTML = `
+                        <span class="item-note">${note}</span>
+                        <span class="item-fingering">${data.fingering.map(h => h ? '●' : '○').join('')}</span>
+                        ${data.discovered ? '<span class="item-badge">New</span>' : ''}
+                    `;
+                    list.appendChild(item);
+                }
+            } catch (err) {
+                console.error('Error loading fingerings:', err);
+            }
+        }
+
+        // Initialize
+        updateFingeringDisplay();
+        loadDiscoveredFingerings();
+    </script>
+</body>
+</html>

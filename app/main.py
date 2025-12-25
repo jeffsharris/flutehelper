@@ -1,3 +1,4 @@
+import json
 import shutil
 import tempfile
 from pathlib import Path
@@ -6,10 +7,12 @@ from fastapi import FastAPI, File, Request, UploadFile
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
 
 from .config import settings
 from .services.omr_service import OMRService
 from .services.fingering_mapper import FingeringMapper
+from .data.fingering_charts import E_FLUTE_FINGERINGS
 
 app = FastAPI(
     title="Flute Helper",
@@ -120,3 +123,77 @@ async def get_fingering_api(note: str):
         pass
 
     return {"note": note, "error": "Fingering not found"}
+
+
+# ===== Fingering Discovery =====
+
+# Custom fingerings storage file
+CUSTOM_FINGERINGS_FILE = APP_DIR / "data" / "custom_fingerings.json"
+
+
+def load_custom_fingerings() -> dict:
+    """Load custom fingerings from JSON file."""
+    if CUSTOM_FINGERINGS_FILE.exists():
+        with open(CUSTOM_FINGERINGS_FILE, "r") as f:
+            return json.load(f)
+    return {}
+
+
+def save_custom_fingerings(fingerings: dict):
+    """Save custom fingerings to JSON file."""
+    with open(CUSTOM_FINGERINGS_FILE, "w") as f:
+        json.dump(fingerings, f, indent=2)
+
+
+class FingeringInput(BaseModel):
+    note: str
+    fingering: list[int]  # [1,1,1,0,0,0] where 1=closed, 0=open
+    frequency: float
+
+
+@app.get("/discover", response_class=HTMLResponse)
+async def discover_page(request: Request):
+    """Render the fingering discovery page."""
+    return templates.TemplateResponse("discover.html", {"request": request})
+
+
+@app.get("/api/fingerings")
+async def get_all_fingerings():
+    """Get all fingerings (built-in + custom)."""
+    # Start with built-in fingerings
+    all_fingerings = {}
+
+    for note, holes in E_FLUTE_FINGERINGS.items():
+        all_fingerings[note] = {
+            "fingering": list(int(h) for h in holes),
+            "discovered": False
+        }
+
+    # Add custom fingerings
+    custom = load_custom_fingerings()
+    for note, data in custom.items():
+        all_fingerings[note] = {
+            "fingering": data["fingering"],
+            "discovered": True,
+            "frequency": data.get("frequency")
+        }
+
+    return all_fingerings
+
+
+@app.post("/api/fingerings")
+async def save_fingering(data: FingeringInput):
+    """Save a new custom fingering."""
+    try:
+        custom = load_custom_fingerings()
+
+        custom[data.note] = {
+            "fingering": data.fingering,
+            "frequency": data.frequency
+        }
+
+        save_custom_fingerings(custom)
+
+        return {"success": True, "note": data.note}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
