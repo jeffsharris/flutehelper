@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flute Helper - Sheet Music to NA Flute Fingerings</title>
+    <link rel="stylesheet" href="/static/css/styles.css">
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Flute Helper</h1>
+            <p>Convert sheet music to Native American flute fingerings</p>
+            <p class="flute-info">6-hole flute in the key of E</p>
+        </header>
+
+        <main>
+            <section class="upload-section">
+                <h2>Upload Sheet Music</h2>
+                <form hx-post="/upload"
+                      hx-target="#results"
+                      hx-encoding="multipart/form-data"
+                      hx-indicator="#loading">
+
+                    <div class="file-input-wrapper">
+                        <input type="file" name="file" id="file"
+                               accept=".png,.jpg,.jpeg" required>
+                        <label for="file" class="file-label">
+                            <span class="file-icon">&#128444;</span>
+                            <span class="file-text">Choose an image...</span>
+                        </label>
+                    </div>
+
+                    <p class="help-text">
+                        Supported formats: PNG, JPG. Works with traditional sheet music and lead sheets.
+                    </p>
+
+                    <button type="submit" class="submit-btn">
+                        Convert to Fingerings
+                    </button>
+                </form>
+
+                <div id="loading" class="htmx-indicator">
+                    <div class="spinner"></div>
+                    <p>Analyzing sheet music... This may take a moment.</p>
+                </div>
+            </section>
+
+            <section id="results">
+                <!-- Results will be loaded here via HTMX -->
+            </section>
+
+            <section class="legend">
+                <h3>Fingering Legend</h3>
+                <div class="legend-items">
+                    <div class="legend-item">
+                        <span class="hole closed"></span>
+                        <span>Covered (closed)</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="hole open"></span>
+                        <span>Open</span>
+                    </div>
+                </div>
+                <p class="legend-note">
+                    Holes shown top to bottom: 1-2-3 (left hand) | 4-5-6 (right hand)
+                </p>
+            </section>
+        </main>
+
+        <footer>
+            <p>Flute Helper - Native American Flute Fingering Converter</p>
+        </footer>
+    </div>
+
+    <script>
+        // Update file input label when file is selected
+        document.getElementById('file').addEventListener('change', function(e) {
+            const fileName = e.target.files[0]?.name || 'Choose an image...';
+            document.querySelector('.file-text').textContent = fileName;
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,373 @@
+:root {
+    --primary-color: #8B4513;
+    --secondary-color: #D2691E;
+    --bg-color: #FFF8DC;
+    --card-bg: #FFFEF7;
+    --text-color: #333;
+    --text-light: #666;
+    --hole-closed: #4a3728;
+    --hole-open: #fff;
+    --hole-border: #8B4513;
+    --error-bg: #fff0f0;
+    --error-border: #ffcccc;
+    --error-text: #cc0000;
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    line-height: 1.6;
+    min-height: 100vh;
+}
+
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+/* Header */
+header {
+    text-align: center;
+    padding: 40px 0 20px;
+}
+
+header h1 {
+    color: var(--primary-color);
+    font-size: 2.5rem;
+    margin-bottom: 10px;
+}
+
+header p {
+    color: var(--text-light);
+    font-size: 1.1rem;
+}
+
+header .flute-info {
+    font-size: 0.9rem;
+    background: var(--primary-color);
+    color: white;
+    display: inline-block;
+    padding: 5px 15px;
+    border-radius: 20px;
+    margin-top: 10px;
+}
+
+/* Upload Section */
+.upload-section {
+    background: var(--card-bg);
+    padding: 30px;
+    border-radius: 10px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    margin-bottom: 30px;
+    text-align: center;
+}
+
+.upload-section h2 {
+    color: var(--primary-color);
+    margin-bottom: 20px;
+}
+
+.file-input-wrapper {
+    margin: 20px 0;
+}
+
+.file-input-wrapper input[type="file"] {
+    display: none;
+}
+
+.file-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 15px 30px;
+    background: white;
+    border: 2px dashed var(--primary-color);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.file-label:hover {
+    background: var(--bg-color);
+    border-style: solid;
+}
+
+.file-icon {
+    font-size: 1.5rem;
+}
+
+.help-text {
+    color: var(--text-light);
+    font-size: 0.9rem;
+    margin-bottom: 20px;
+}
+
+.submit-btn {
+    background: var(--primary-color);
+    color: white;
+    padding: 12px 40px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 1.1rem;
+    transition: background 0.3s ease;
+}
+
+.submit-btn:hover {
+    background: var(--secondary-color);
+}
+
+/* Loading Indicator */
+.htmx-indicator {
+    display: none;
+    padding: 20px;
+}
+
+.htmx-request .htmx-indicator {
+    display: block;
+}
+
+.htmx-request .submit-btn {
+    opacity: 0.6;
+    cursor: wait;
+}
+
+.spinner {
+    width: 40px;
+    height: 40px;
+    border: 4px solid var(--bg-color);
+    border-top-color: var(--primary-color);
+    border-radius: 50%;
+    margin: 0 auto 15px;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Results */
+.results-container {
+    background: var(--card-bg);
+    padding: 30px;
+    border-radius: 10px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    margin-bottom: 30px;
+}
+
+.results-header {
+    text-align: center;
+    margin-bottom: 25px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid #eee;
+}
+
+.results-header h2 {
+    color: var(--primary-color);
+    margin-bottom: 10px;
+}
+
+.key-sig {
+    color: var(--text-light);
+    font-style: italic;
+}
+
+.stats {
+    color: var(--text-light);
+    font-size: 0.95rem;
+}
+
+.stats strong {
+    color: var(--primary-color);
+}
+
+/* Fingering Grid */
+.fingering-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+    gap: 15px;
+}
+
+.fingering-card {
+    background: white;
+    padding: 12px;
+    border-radius: 8px;
+    text-align: center;
+    box-shadow: 0 1px 5px rgba(0,0,0,0.08);
+    transition: transform 0.2s ease;
+}
+
+.fingering-card:hover {
+    transform: translateY(-2px);
+}
+
+.fingering-card.not-playable {
+    background: var(--error-bg);
+    border: 1px solid var(--error-border);
+}
+
+.note-name {
+    font-size: 1.1rem;
+    font-weight: bold;
+    color: var(--primary-color);
+    margin-bottom: 8px;
+}
+
+/* Flute Diagram SVG */
+.fingering-diagram {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.flute-diagram {
+    width: 40px;
+    height: 140px;
+}
+
+.flute-diagram .hole {
+    stroke: var(--hole-border);
+    stroke-width: 2;
+}
+
+.flute-diagram .hole.closed {
+    fill: var(--hole-closed);
+}
+
+.flute-diagram .hole.open {
+    fill: var(--hole-open);
+}
+
+.fingering-text {
+    font-family: monospace;
+    font-size: 0.85rem;
+    margin-top: 5px;
+    color: var(--text-light);
+    letter-spacing: 1px;
+}
+
+/* Not Playable */
+.not-playable-info {
+    padding: 10px;
+    color: var(--error-text);
+}
+
+.warning-icon {
+    font-size: 1.5rem;
+    display: block;
+    margin-bottom: 5px;
+}
+
+.not-playable-info p {
+    font-size: 0.8rem;
+}
+
+/* Legend */
+.legend {
+    background: var(--card-bg);
+    padding: 20px;
+    border-radius: 10px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    margin-bottom: 30px;
+}
+
+.legend h3 {
+    color: var(--primary-color);
+    margin-bottom: 15px;
+    font-size: 1rem;
+}
+
+.legend-items {
+    display: flex;
+    gap: 30px;
+    justify-content: center;
+    margin-bottom: 10px;
+}
+
+.legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.legend-item .hole {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    border: 2px solid var(--hole-border);
+}
+
+.legend-item .hole.closed {
+    background: var(--hole-closed);
+}
+
+.legend-item .hole.open {
+    background: var(--hole-open);
+}
+
+.legend-note {
+    font-size: 0.85rem;
+    color: var(--text-light);
+    text-align: center;
+}
+
+/* Error */
+.error {
+    background: var(--error-bg);
+    border: 1px solid var(--error-border);
+    padding: 30px;
+    border-radius: 10px;
+    text-align: center;
+    color: var(--error-text);
+}
+
+.error-icon {
+    font-size: 2rem;
+    display: block;
+    margin-bottom: 10px;
+}
+
+/* No Notes */
+.no-notes {
+    text-align: center;
+    padding: 30px;
+    color: var(--text-light);
+}
+
+/* Footer */
+footer {
+    text-align: center;
+    padding: 20px;
+    color: var(--text-light);
+    font-size: 0.9rem;
+}
+
+/* Responsive */
+@media (max-width: 600px) {
+    header h1 {
+        font-size: 1.8rem;
+    }
+
+    .fingering-grid {
+        grid-template-columns: repeat(auto-fill, minmax(70px, 1fr));
+        gap: 10px;
+    }
+
+    .fingering-card {
+        padding: 8px;
+    }
+
+    .legend-items {
+        flex-direction: column;
+        gap: 10px;
+        align-items: center;
+    }
+}
