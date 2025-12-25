@@ -3,136 +3,433 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Fingering Discovery - Flute Helper</title>
+    <title>Build Your Flute - Flute Helper</title>
     <link rel="stylesheet" href="/static/css/styles.css">
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>Fingering Discovery</h1>
-            <p>Discover new fingerings by playing your flute</p>
-            <p><a href="/" class="back-link">Back to Converter</a></p>
-        </header>
+    <header class="header">
+        <div class="container">
+            <div class="header-inner">
+                <a href="/" class="logo">
+                    <div class="logo-icon">♪</div>
+                    Flute Helper
+                </a>
+                <nav class="nav">
+                    <a href="/" class="nav-link">Convert</a>
+                    <a href="/discover" class="nav-link active">Build Flute</a>
+                    <a href="/library" class="nav-link">Library</a>
+                </nav>
+            </div>
+        </div>
+    </header>
 
-        <main>
-            <div class="discover-layout">
-                <section class="fingering-input">
-                    <h2>1. Set Fingering</h2>
-                    <p class="help-text">Click holes to toggle open/closed</p>
+    <main class="container">
+        <div class="page-header">
+            <h1 class="page-title">Build Your Flute Profile</h1>
+            <p class="page-subtitle">Record fingerings for each note on your flute</p>
+        </div>
 
-                    <div class="interactive-diagram">
-                        <svg viewBox="0 0 80 220" class="large-flute-diagram" id="fingering-svg">
-                            <!-- Left hand label -->
-                            <text x="60" y="50" class="hand-label">L</text>
+        <!-- Profile Selection -->
+        <div class="profile-selector">
+            <label>Flute Profile:</label>
+            <select id="profile-select" class="form-select" style="max-width: 200px;">
+                <option value="">Select a profile...</option>
+                {% for id, profile in profiles.items() %}
+                <option value="{{ id }}" {% if id == last_profile_id %}selected{% endif %}>
+                    {{ profile.name }}
+                </option>
+                {% endfor %}
+            </select>
+            <button id="new-profile-btn" class="btn btn-secondary btn-sm">+ New Flute</button>
+            <button id="delete-profile-btn" class="btn btn-outline btn-sm" style="display: none;">Delete</button>
+        </div>
 
-                            <!-- Top 3 holes (left hand) -->
-                            <circle cx="30" cy="30" r="18" class="hole closed" data-hole="0"/>
-                            <circle cx="30" cy="70" r="18" class="hole closed" data-hole="1"/>
-                            <circle cx="30" cy="110" r="18" class="hole closed" data-hole="2"/>
+        <!-- No profile selected state -->
+        <div id="no-profile-state" class="card mb-3 text-center" {% if last_profile_id %}style="display: none;"{% endif %}>
+            <div class="empty-state">
+                <div class="empty-icon">🎵</div>
+                <h3 class="empty-title">Create Your First Flute Profile</h3>
+                <p class="empty-text">Each flute has unique fingerings. Create a profile to start recording.</p>
+                <button id="create-first-btn" class="btn btn-primary">Create Flute Profile</button>
+            </div>
+        </div>
 
-                            <!-- Divider -->
-                            <line x1="5" y1="140" x2="55" y2="140" stroke="#ccc" stroke-width="2"/>
-
-                            <!-- Right hand label -->
-                            <text x="60" y="170" class="hand-label">R</text>
-
-                            <!-- Bottom 3 holes (right hand) -->
-                            <circle cx="30" cy="160" r="18" class="hole closed" data-hole="3"/>
-                            <circle cx="30" cy="200" r="18" class="hole closed" data-hole="4"/>
-                            <circle cx="30" cy="240" r="18" class="hole closed" data-hole="5"/>
-                        </svg>
-
-                        <div class="fingering-display">
-                            <span id="current-fingering">------</span>
-                        </div>
+        <!-- Main content (hidden until profile selected) -->
+        <div id="main-content" {% if not last_profile_id %}style="display: none;"{% endif %}>
+            <!-- Settings Row -->
+            <div class="card mb-3">
+                <div class="flex items-center justify-between gap-2" style="flex-wrap: wrap;">
+                    <div class="flex items-center gap-2">
+                        <span class="text-muted text-sm">A4 Tuning:</span>
+                        <input type="number" id="a4-freq" class="form-input form-input-sm" style="width: 80px;" value="440" min="400" max="480">
+                        <span class="text-muted text-sm">Hz</span>
                     </div>
-                </section>
-
-                <section class="audio-capture">
-                    <h2>2. Play & Record</h2>
-                    <p class="help-text">Play the note on your flute while recording</p>
-
-                    <div class="record-controls">
-                        <button id="record-btn" class="record-btn">
-                            <span class="record-icon"></span>
-                            Start Recording
-                        </button>
-
-                        <div id="recording-status" class="recording-status hidden">
-                            <div class="pulse"></div>
-                            <span>Listening...</span>
-                        </div>
+                    <div class="flex items-center gap-2">
+                        <span class="text-muted text-sm">Volume:</span>
+                        <input type="range" id="volume-threshold" class="setting-slider" min="0.01" max="0.2" step="0.01" value="0.05" style="width: 80px;">
+                        <span class="text-muted text-sm">Stability:</span>
+                        <input type="range" id="stability-threshold" class="setting-slider" min="100" max="1000" step="50" value="300" style="width: 80px;">
                     </div>
-
-                    <div class="pitch-display">
-                        <div class="detected-note" id="detected-note">--</div>
-                        <div class="detected-freq" id="detected-freq">-- Hz</div>
-                        <div class="pitch-meter">
-                            <div class="pitch-bar" id="pitch-bar"></div>
-                        </div>
-                    </div>
-                </section>
-
-                <section class="save-fingering">
-                    <h2>3. Save Fingering</h2>
-                    <p class="help-text">Associate this fingering with the detected note</p>
-
-                    <div class="save-preview">
-                        <div class="preview-item">
-                            <label>Fingering:</label>
-                            <span id="save-fingering">------</span>
-                        </div>
-                        <div class="preview-item">
-                            <label>Note:</label>
-                            <span id="save-note">--</span>
-                        </div>
-                    </div>
-
-                    <button id="save-btn" class="save-btn" disabled>Save Fingering</button>
-                    <div id="save-status" class="save-status"></div>
-                </section>
+                    <button id="save-settings-btn" class="btn btn-outline btn-sm">Save Settings</button>
+                </div>
             </div>
 
-            <section class="discovered-list">
-                <h2>Discovered Fingerings</h2>
-                <div id="fingering-list" class="fingering-list">
-                    <!-- Populated dynamically -->
+            <!-- Discovery Layout -->
+            <div class="discover-layout">
+                <!-- Column 1: Fingering Input -->
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">1. Set Fingering</h3>
+                        <p class="card-subtitle">Click holes to toggle</p>
+                    </div>
+                    <div class="flute-diagram-container">
+                        <svg viewBox="0 0 50 175" width="50" height="175" class="flute-svg" id="fingering-svg">
+                            <text x="38" y="24" class="hand-label">L</text>
+                            <circle cx="20" cy="18" r="11" class="hole closed" data-hole="0"/>
+                            <circle cx="20" cy="44" r="11" class="hole closed" data-hole="1"/>
+                            <circle cx="20" cy="70" r="11" class="hole closed" data-hole="2"/>
+                            <line x1="5" y1="88" x2="35" y2="88" class="divider"/>
+                            <text x="38" y="108" class="hand-label">R</text>
+                            <circle cx="20" cy="102" r="11" class="hole closed" data-hole="3"/>
+                            <circle cx="20" cy="128" r="11" class="hole closed" data-hole="4"/>
+                            <circle cx="20" cy="154" r="11" class="hole closed" data-hole="5"/>
+                        </svg>
+                        <div class="fingering-text" id="current-fingering">●●●●●●</div>
+                    </div>
                 </div>
-            </section>
-        </main>
+
+                <!-- Column 2: Recording -->
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">2. Record Note</h3>
+                        <p class="card-subtitle">Play the fingering on your flute</p>
+                    </div>
+                    <div class="record-section">
+                        <button id="record-btn" class="record-btn">
+                            <span class="dot"></span>
+                            <span id="record-text">Start Recording</span>
+                        </button>
+
+                        <div class="audio-viz">
+                            <div class="volume-meter">
+                                <div class="volume-bar" id="volume-bar"></div>
+                                <div class="volume-threshold" id="volume-line"></div>
+                            </div>
+
+                            <div class="detected-note">
+                                <div class="note-display" id="detected-note">--</div>
+                                <div class="note-freq" id="detected-freq">-- Hz</div>
+                            </div>
+
+                            <div class="stability-bar">
+                                <div class="stability-fill" id="stability-bar"></div>
+                            </div>
+                            <div class="stability-text" id="stability-text">Waiting...</div>
+                        </div>
+
+                        <div class="locked-note hidden" id="locked-display">
+                            <span>Locked:</span>
+                            <span id="locked-note">--</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Column 3: Save -->
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">3. Save</h3>
+                        <p class="card-subtitle">Associate fingering with note</p>
+                    </div>
+                    <div class="save-preview">
+                        <div class="save-preview-row">
+                            <span class="save-preview-label">Fingering</span>
+                            <span class="save-preview-value" id="save-fingering">●●●●●●</span>
+                        </div>
+                        <div class="save-preview-row">
+                            <span class="save-preview-label">Note</span>
+                            <span class="save-preview-value" id="save-note">--</span>
+                        </div>
+                    </div>
+                    <button id="save-btn" class="btn btn-success" style="width: 100%;" disabled>
+                        Save Fingering
+                    </button>
+                    <button id="clear-btn" class="btn btn-outline btn-sm mt-2" style="width: 100%;">
+                        Clear Locked Note
+                    </button>
+                    <div id="save-status" class="status hidden"></div>
+                </div>
+            </div>
+
+            <!-- Fingerings List -->
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">Your Flute's Fingerings</h3>
+                    <p class="card-subtitle" id="fingering-count">0 notes recorded</p>
+                </div>
+                <div id="fingerings-list" class="fingerings-grid">
+                    <div class="empty-state">
+                        <p class="empty-text">No fingerings recorded yet. Start by setting a fingering pattern and playing the note.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- New Profile Modal -->
+    <div id="modal-backdrop" class="modal-backdrop">
+        <div class="modal">
+            <h3 class="modal-title">Create New Flute Profile</h3>
+            <div class="form-group">
+                <label class="form-label">Flute Name</label>
+                <input type="text" id="new-profile-name" class="form-input" placeholder="e.g., My Cedar Flute">
+            </div>
+            <div class="form-group">
+                <label class="form-label">A4 Frequency (Hz)</label>
+                <input type="number" id="new-profile-a4" class="form-input" value="440" min="400" max="480">
+                <p class="text-muted text-sm mt-1">Standard: 440Hz, Alternative: 432Hz</p>
+            </div>
+            <div class="modal-actions">
+                <button id="modal-cancel" class="btn btn-outline">Cancel</button>
+                <button id="modal-create" class="btn btn-primary">Create Profile</button>
+            </div>
+        </div>
     </div>
 
+    <!-- Toast -->
+    <div id="toast" class="toast"></div>
+
     <script>
-        // Fingering state
-        const holes = [true, true, true, true, true, true]; // true = closed
-        let detectedNote = null;
-        let detectedFreq = null;
+        // State
+        let currentProfileId = '{{ last_profile_id or "" }}';
+        const holes = [true, true, true, true, true, true];
+        let lockedNote = null;
+        let lockedFreq = null;
         let isRecording = false;
         let audioContext = null;
         let analyser = null;
         let mediaStream = null;
+        let lastDetectedNote = null;
+        let noteStableStartTime = null;
 
-        // Note frequencies (A4 = 440Hz)
-        const noteFreqs = {
-            'C3': 130.81, 'C#3': 138.59, 'D3': 146.83, 'D#3': 155.56, 'E3': 164.81,
-            'F3': 174.61, 'F#3': 185.00, 'G3': 196.00, 'G#3': 207.65, 'A3': 220.00,
-            'A#3': 233.08, 'B3': 246.94,
-            'C4': 261.63, 'C#4': 277.18, 'D4': 293.66, 'D#4': 311.13, 'E4': 329.63,
-            'F4': 349.23, 'F#4': 369.99, 'G4': 392.00, 'G#4': 415.30, 'A4': 440.00,
-            'A#4': 466.16, 'B4': 493.88,
-            'C5': 523.25, 'C#5': 554.37, 'D5': 587.33, 'D#5': 622.25, 'E5': 659.25,
-            'F5': 698.46, 'F#5': 739.99, 'G5': 783.99, 'G#5': 830.61, 'A5': 880.00,
-            'A#5': 932.33, 'B5': 987.77,
-            'C6': 1046.50
+        // Settings
+        let a4Frequency = 440;
+        let volumeThreshold = 0.05;
+        let stabilityThreshold = 300;
+
+        // Generate note frequencies
+        function generateNoteFreqs(a4 = 440) {
+            const notes = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+            const freqs = {};
+            for (let octave = 3; octave <= 6; octave++) {
+                for (let i = 0; i < notes.length; i++) {
+                    const noteName = notes[i] + octave;
+                    const midiNumber = (octave + 1) * 12 + i;
+                    freqs[noteName] = a4 * Math.pow(2, (midiNumber - 69) / 12);
+                }
+            }
+            return freqs;
+        }
+
+        let noteFreqs = generateNoteFreqs(a4Frequency);
+
+        // DOM Elements
+        const profileSelect = document.getElementById('profile-select');
+        const noProfileState = document.getElementById('no-profile-state');
+        const mainContent = document.getElementById('main-content');
+        const deleteBtn = document.getElementById('delete-profile-btn');
+
+        // Profile selection
+        profileSelect.addEventListener('change', async (e) => {
+            currentProfileId = e.target.value;
+            if (currentProfileId) {
+                noProfileState.style.display = 'none';
+                mainContent.style.display = 'block';
+                deleteBtn.style.display = 'inline-flex';
+                await loadProfile();
+                loadFingerings();
+            } else {
+                noProfileState.style.display = 'block';
+                mainContent.style.display = 'none';
+                deleteBtn.style.display = 'none';
+            }
+        });
+
+        // Load profile settings
+        async function loadProfile() {
+            if (!currentProfileId) return;
+            try {
+                const res = await fetch('/api/profiles/' + currentProfileId);
+                const profile = await res.json();
+                a4Frequency = profile.a4_frequency || 440;
+                volumeThreshold = profile.volume_threshold || 0.05;
+                stabilityThreshold = profile.stability_threshold || 300;
+
+                document.getElementById('a4-freq').value = a4Frequency;
+                document.getElementById('volume-threshold').value = volumeThreshold;
+                document.getElementById('stability-threshold').value = stabilityThreshold;
+                noteFreqs = generateNoteFreqs(a4Frequency);
+                updateVolumeLine();
+            } catch (err) {
+                console.error('Error loading profile:', err);
+            }
+        }
+
+        // Load fingerings for current profile
+        async function loadFingerings() {
+            if (!currentProfileId) return;
+            try {
+                const res = await fetch('/api/fingerings/' + currentProfileId);
+                const fingerings = await res.json();
+                const list = document.getElementById('fingerings-list');
+                const countEl = document.getElementById('fingering-count');
+
+                const notes = Object.keys(fingerings);
+                countEl.textContent = notes.length + ' note' + (notes.length !== 1 ? 's' : '') + ' recorded';
+
+                if (notes.length === 0) {
+                    list.innerHTML = '<div class="empty-state"><p class="empty-text">No fingerings yet. Record your first note!</p></div>';
+                    return;
+                }
+
+                // Sort notes by pitch
+                notes.sort((a, b) => {
+                    const freqA = noteFreqs[a] || 0;
+                    const freqB = noteFreqs[b] || 0;
+                    return freqA - freqB;
+                });
+
+                list.innerHTML = notes.map(note => {
+                    const f = fingerings[note].fingering;
+                    const symbols = f.map(h => h ? '●' : '○').join('');
+                    return `
+                        <div class="fingering-item" data-note="${note}">
+                            <div class="fingering-note">${note}</div>
+                            <div class="fingering-holes">${symbols}</div>
+                            <div class="fingering-delete" onclick="deleteFingering('${note}')">Remove</div>
+                        </div>
+                    `;
+                }).join('');
+            } catch (err) {
+                console.error('Error loading fingerings:', err);
+            }
+        }
+
+        // Delete a fingering
+        async function deleteFingering(note) {
+            if (!confirm('Remove fingering for ' + note + '?')) return;
+            try {
+                await fetch('/api/fingerings/' + currentProfileId + '/' + encodeURIComponent(note), {
+                    method: 'DELETE'
+                });
+                loadFingerings();
+                showToast('Removed ' + note);
+            } catch (err) {
+                console.error('Error:', err);
+            }
+        }
+
+        // New profile modal
+        const modal = document.getElementById('modal-backdrop');
+        document.getElementById('new-profile-btn').onclick = () => modal.classList.add('show');
+        document.getElementById('create-first-btn').onclick = () => modal.classList.add('show');
+        document.getElementById('modal-cancel').onclick = () => modal.classList.remove('show');
+
+        document.getElementById('modal-create').onclick = async () => {
+            const name = document.getElementById('new-profile-name').value.trim();
+            const a4 = parseInt(document.getElementById('new-profile-a4').value);
+
+            if (!name) {
+                alert('Please enter a name');
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/profiles', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, a4_frequency: a4 })
+                });
+                const data = await res.json();
+
+                if (data.success) {
+                    // Add to dropdown
+                    const opt = document.createElement('option');
+                    opt.value = data.profile_id;
+                    opt.textContent = name;
+                    profileSelect.appendChild(opt);
+                    profileSelect.value = data.profile_id;
+                    profileSelect.dispatchEvent(new Event('change'));
+
+                    modal.classList.remove('show');
+                    document.getElementById('new-profile-name').value = '';
+                    showToast('Created "' + name + '"');
+                }
+            } catch (err) {
+                console.error('Error:', err);
+            }
         };
 
-        // Initialize hole click handlers
-        document.querySelectorAll('.hole').forEach(hole => {
+        // Delete profile
+        deleteBtn.onclick = async () => {
+            if (!currentProfileId) return;
+            const name = profileSelect.options[profileSelect.selectedIndex].text;
+            if (!confirm('Delete "' + name + '"? All fingerings will be lost.')) return;
+
+            try {
+                await fetch('/api/profiles/' + currentProfileId, { method: 'DELETE' });
+                profileSelect.querySelector(`option[value="${currentProfileId}"]`).remove();
+                profileSelect.value = '';
+                profileSelect.dispatchEvent(new Event('change'));
+                showToast('Deleted "' + name + '"');
+            } catch (err) {
+                console.error('Error:', err);
+            }
+        };
+
+        // Save settings
+        document.getElementById('save-settings-btn').onclick = async () => {
+            if (!currentProfileId) return;
+            a4Frequency = parseInt(document.getElementById('a4-freq').value);
+            noteFreqs = generateNoteFreqs(a4Frequency);
+
+            try {
+                await fetch('/api/profiles/' + currentProfileId, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        a4_frequency: a4Frequency,
+                        volume_threshold: volumeThreshold,
+                        stability_threshold: stabilityThreshold
+                    })
+                });
+                showToast('Settings saved');
+            } catch (err) {
+                console.error('Error:', err);
+            }
+        };
+
+        // Threshold controls
+        document.getElementById('volume-threshold').oninput = (e) => {
+            volumeThreshold = parseFloat(e.target.value);
+            updateVolumeLine();
+        };
+
+        document.getElementById('stability-threshold').oninput = (e) => {
+            stabilityThreshold = parseInt(e.target.value);
+        };
+
+        function updateVolumeLine() {
+            const pct = (volumeThreshold / 0.2) * 100;
+            document.getElementById('volume-line').style.left = pct + '%';
+        }
+
+        // Hole click handlers
+        document.querySelectorAll('#fingering-svg .hole').forEach(hole => {
             hole.addEventListener('click', () => {
-                const index = parseInt(hole.dataset.hole);
-                holes[index] = !holes[index];
-                hole.classList.toggle('closed', holes[index]);
-                hole.classList.toggle('open', !holes[index]);
+                const i = parseInt(hole.dataset.hole);
+                holes[i] = !holes[i];
+                hole.classList.toggle('closed', holes[i]);
+                hole.classList.toggle('open', !holes[i]);
                 updateFingeringDisplay();
             });
         });
@@ -143,14 +440,14 @@
             document.getElementById('save-fingering').textContent = display;
         }
 
-        // Audio recording and pitch detection
-        document.getElementById('record-btn').addEventListener('click', async () => {
+        // Recording
+        document.getElementById('record-btn').onclick = async () => {
             if (isRecording) {
                 stopRecording();
             } else {
                 await startRecording();
             }
-        });
+        };
 
         async function startRecording() {
             try {
@@ -163,27 +460,20 @@
                 source.connect(analyser);
 
                 isRecording = true;
-                document.getElementById('record-btn').textContent = 'Stop Recording';
                 document.getElementById('record-btn').classList.add('recording');
-                document.getElementById('recording-status').classList.remove('hidden');
-
+                document.getElementById('record-text').textContent = 'Stop';
                 detectPitch();
             } catch (err) {
-                alert('Could not access microphone: ' + err.message);
+                alert('Microphone access denied');
             }
         }
 
         function stopRecording() {
             isRecording = false;
-            if (mediaStream) {
-                mediaStream.getTracks().forEach(track => track.stop());
-            }
-            if (audioContext) {
-                audioContext.close();
-            }
-            document.getElementById('record-btn').textContent = 'Start Recording';
+            if (mediaStream) mediaStream.getTracks().forEach(t => t.stop());
+            if (audioContext) audioContext.close();
             document.getElementById('record-btn').classList.remove('recording');
-            document.getElementById('recording-status').classList.add('hidden');
+            document.getElementById('record-text').textContent = 'Start Recording';
         }
 
         function detectPitch() {
@@ -192,71 +482,88 @@
             const buffer = new Float32Array(analyser.fftSize);
             analyser.getFloatTimeDomainData(buffer);
 
+            // RMS
+            let rms = 0;
+            for (let i = 0; i < buffer.length; i++) rms += buffer[i] * buffer[i];
+            rms = Math.sqrt(rms / buffer.length);
+
+            // Volume bar
+            const volPct = Math.min((rms / 0.2) * 100, 100);
+            document.getElementById('volume-bar').style.width = volPct + '%';
+
+            if (rms < volumeThreshold) {
+                lastDetectedNote = null;
+                noteStableStartTime = null;
+                document.getElementById('detected-note').textContent = '--';
+                document.getElementById('detected-freq').textContent = '-- Hz';
+                document.getElementById('stability-bar').style.width = '0%';
+                document.getElementById('stability-text').textContent = 'Below threshold';
+                requestAnimationFrame(detectPitch);
+                return;
+            }
+
             const freq = autoCorrelate(buffer, audioContext.sampleRate);
 
             if (freq > 0) {
-                detectedFreq = freq;
-                detectedNote = frequencyToNote(freq);
-
+                const note = frequencyToNote(freq);
+                document.getElementById('detected-note').textContent = note;
                 document.getElementById('detected-freq').textContent = freq.toFixed(1) + ' Hz';
-                document.getElementById('detected-note').textContent = detectedNote;
-                document.getElementById('save-note').textContent = detectedNote;
-                document.getElementById('save-btn').disabled = false;
 
-                // Update pitch bar (visual feedback)
-                const cents = getCents(freq, detectedNote);
-                const barPosition = 50 + (cents / 50) * 50;
-                document.getElementById('pitch-bar').style.left = Math.max(0, Math.min(100, barPosition)) + '%';
+                const now = Date.now();
+                if (note === lastDetectedNote) {
+                    const duration = now - noteStableStartTime;
+                    const pct = Math.min((duration / stabilityThreshold) * 100, 100);
+                    document.getElementById('stability-bar').style.width = pct + '%';
+
+                    if (duration >= stabilityThreshold && !lockedNote) {
+                        lockedNote = note;
+                        lockedFreq = freq;
+                        document.getElementById('locked-note').textContent = note;
+                        document.getElementById('locked-display').classList.remove('hidden');
+                        document.getElementById('save-note').textContent = note;
+                        document.getElementById('save-btn').disabled = false;
+                        document.getElementById('stability-text').textContent = 'Locked!';
+                    } else if (!lockedNote) {
+                        document.getElementById('stability-text').textContent = 'Hold steady...';
+                    }
+                } else {
+                    lastDetectedNote = note;
+                    noteStableStartTime = now;
+                    document.getElementById('stability-bar').style.width = '0%';
+                    document.getElementById('stability-text').textContent = 'Detecting...';
+                }
             }
 
             requestAnimationFrame(detectPitch);
         }
 
-        // Autocorrelation pitch detection
         function autoCorrelate(buffer, sampleRate) {
             const SIZE = buffer.length;
             let rms = 0;
-
-            for (let i = 0; i < SIZE; i++) {
-                rms += buffer[i] * buffer[i];
-            }
+            for (let i = 0; i < SIZE; i++) rms += buffer[i] * buffer[i];
             rms = Math.sqrt(rms / SIZE);
-
-            if (rms < 0.01) return -1; // Not enough signal
+            if (rms < volumeThreshold) return -1;
 
             let r1 = 0, r2 = SIZE - 1;
-            const threshold = 0.2;
-
-            for (let i = 0; i < SIZE / 2; i++) {
-                if (Math.abs(buffer[i]) < threshold) { r1 = i; break; }
-            }
-            for (let i = 1; i < SIZE / 2; i++) {
-                if (Math.abs(buffer[SIZE - i]) < threshold) { r2 = SIZE - i; break; }
-            }
+            const th = 0.2;
+            for (let i = 0; i < SIZE / 2; i++) if (Math.abs(buffer[i]) < th) { r1 = i; break; }
+            for (let i = 1; i < SIZE / 2; i++) if (Math.abs(buffer[SIZE - i]) < th) { r2 = SIZE - i; break; }
 
             const buf2 = buffer.slice(r1, r2);
             const c = new Array(buf2.length).fill(0);
-
-            for (let i = 0; i < buf2.length; i++) {
-                for (let j = 0; j < buf2.length - i; j++) {
+            for (let i = 0; i < buf2.length; i++)
+                for (let j = 0; j < buf2.length - i; j++)
                     c[i] += buf2[j] * buf2[j + i];
-                }
-            }
 
             let d = 0;
             while (c[d] > c[d + 1]) d++;
 
             let maxval = -1, maxpos = -1;
             for (let i = d; i < buf2.length; i++) {
-                if (c[i] > maxval) {
-                    maxval = c[i];
-                    maxpos = i;
-                }
+                if (c[i] > maxval) { maxval = c[i]; maxpos = i; }
             }
 
             let T0 = maxpos;
-
-            // Parabolic interpolation
             const x1 = c[T0 - 1], x2 = c[T0], x3 = c[T0 + 1];
             const a = (x1 + x3 - 2 * x2) / 2;
             const b = (x3 - x1) / 2;
@@ -266,89 +573,77 @@
         }
 
         function frequencyToNote(freq) {
-            let minDiff = Infinity;
-            let closestNote = null;
-
-            for (const [note, noteFreq] of Object.entries(noteFreqs)) {
-                const diff = Math.abs(freq - noteFreq);
-                if (diff < minDiff) {
-                    minDiff = diff;
-                    closestNote = note;
-                }
+            let minDiff = Infinity, closest = null;
+            for (const [note, nf] of Object.entries(noteFreqs)) {
+                const diff = Math.abs(freq - nf);
+                if (diff < minDiff) { minDiff = diff; closest = note; }
             }
-
-            return closestNote;
+            return closest;
         }
 
-        function getCents(freq, note) {
-            const noteFreq = noteFreqs[note];
-            return 1200 * Math.log2(freq / noteFreq);
-        }
+        // Clear locked note
+        document.getElementById('clear-btn').onclick = () => {
+            lockedNote = null;
+            lockedFreq = null;
+            lastDetectedNote = null;
+            noteStableStartTime = null;
+            document.getElementById('locked-display').classList.add('hidden');
+            document.getElementById('save-note').textContent = '--';
+            document.getElementById('save-btn').disabled = true;
+            document.getElementById('stability-bar').style.width = '0%';
+            document.getElementById('stability-text').textContent = 'Waiting...';
+        };
 
         // Save fingering
-        document.getElementById('save-btn').addEventListener('click', async () => {
-            if (!detectedNote) return;
-
-            const fingering = holes.map(h => h ? 1 : 0);
+        document.getElementById('save-btn').onclick = async () => {
+            if (!lockedNote || !currentProfileId) return;
 
             try {
-                const response = await fetch('/api/fingerings', {
+                const res = await fetch('/api/fingerings', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        note: detectedNote,
-                        fingering: fingering,
-                        frequency: detectedFreq
+                        note: lockedNote,
+                        fingering: holes.map(h => h ? 1 : 0),
+                        frequency: lockedFreq,
+                        profile_id: currentProfileId
                     })
                 });
+                const data = await res.json();
 
-                const result = await response.json();
-
-                if (result.success) {
-                    document.getElementById('save-status').textContent = 'Saved!';
-                    document.getElementById('save-status').className = 'save-status success';
-                    loadDiscoveredFingerings();
+                if (data.success) {
+                    showStatus('Saved ' + lockedNote + '!', 'success');
+                    loadFingerings();
+                    document.getElementById('clear-btn').click();
                 } else {
-                    document.getElementById('save-status').textContent = result.error || 'Error saving';
-                    document.getElementById('save-status').className = 'save-status error';
+                    showStatus(data.error || 'Error saving', 'error');
                 }
             } catch (err) {
-                document.getElementById('save-status').textContent = 'Error: ' + err.message;
-                document.getElementById('save-status').className = 'save-status error';
+                showStatus('Error: ' + err.message, 'error');
             }
+        };
 
-            setTimeout(() => {
-                document.getElementById('save-status').textContent = '';
-            }, 3000);
-        });
-
-        // Load discovered fingerings
-        async function loadDiscoveredFingerings() {
-            try {
-                const response = await fetch('/api/fingerings');
-                const fingerings = await response.json();
-
-                const list = document.getElementById('fingering-list');
-                list.innerHTML = '';
-
-                for (const [note, data] of Object.entries(fingerings)) {
-                    const item = document.createElement('div');
-                    item.className = 'fingering-item';
-                    item.innerHTML = `
-                        <span class="item-note">${note}</span>
-                        <span class="item-fingering">${data.fingering.map(h => h ? '●' : '○').join('')}</span>
-                        ${data.discovered ? '<span class="item-badge">New</span>' : ''}
-                    `;
-                    list.appendChild(item);
-                }
-            } catch (err) {
-                console.error('Error loading fingerings:', err);
-            }
+        function showStatus(msg, type) {
+            const el = document.getElementById('save-status');
+            el.textContent = msg;
+            el.className = 'status ' + type;
+            setTimeout(() => el.classList.add('hidden'), 3000);
         }
 
-        // Initialize
-        updateFingeringDisplay();
-        loadDiscoveredFingerings();
+        function showToast(msg) {
+            const t = document.getElementById('toast');
+            t.textContent = msg;
+            t.classList.add('show');
+            setTimeout(() => t.classList.remove('show'), 3000);
+        }
+
+        // Init
+        if (currentProfileId) {
+            loadProfile();
+            loadFingerings();
+            deleteBtn.style.display = 'inline-flex';
+        }
+        updateVolumeLine();
     </script>
 </body>
 </html>

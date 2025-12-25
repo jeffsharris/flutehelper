@@ -8,79 +8,153 @@
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>Flute Helper</h1>
-            <p>Convert sheet music to Native American flute fingerings</p>
-            <p class="flute-info">6-hole flute in the key of E</p>
-            <p style="margin-top: 15px;"><a href="/discover" class="back-link">Discover New Fingerings</a></p>
-        </header>
+    <header class="header">
+        <div class="container">
+            <div class="header-inner">
+                <a href="/" class="logo">
+                    <div class="logo-icon">♪</div>
+                    Flute Helper
+                </a>
+                <nav class="nav">
+                    <a href="/" class="nav-link active">Convert</a>
+                    <a href="/discover" class="nav-link">Build Flute</a>
+                    <a href="/library" class="nav-link">Library</a>
+                </nav>
+            </div>
+        </div>
+    </header>
 
-        <main>
-            <section class="upload-section">
-                <h2>Upload Sheet Music</h2>
-                <form hx-post="/upload"
-                      hx-target="#results"
-                      hx-encoding="multipart/form-data"
-                      hx-indicator="#loading">
+    <main class="container">
+        <div class="page-header">
+            <h1 class="page-title">Convert Sheet Music</h1>
+            <p class="page-subtitle">Upload an image to get fingerings for your Native American flute</p>
+        </div>
 
-                    <div class="file-input-wrapper">
-                        <input type="file" name="file" id="file"
-                               accept=".png,.jpg,.jpeg" required>
-                        <label for="file" class="file-label">
-                            <span class="file-icon">&#128444;</span>
-                            <span class="file-text">Choose an image...</span>
-                        </label>
+        <!-- Profile Selection -->
+        {% if profiles %}
+        <div class="profile-selector">
+            <label>Using Flute:</label>
+            <select id="profile-select" class="form-select" style="max-width: 200px;">
+                {% for id, profile in profiles.items() %}
+                <option value="{{ id }}" {% if id == last_profile_id %}selected{% endif %}>
+                    {{ profile.name }} ({{ profile.a4_frequency }}Hz)
+                </option>
+                {% endfor %}
+            </select>
+            <a href="/discover" class="btn btn-secondary btn-sm">Manage Flutes</a>
+        </div>
+        {% else %}
+        <div class="card mb-3" style="text-align: center;">
+            <div class="empty-state" style="padding: 32px;">
+                <div class="empty-icon">🎵</div>
+                <h3 class="empty-title">No Flute Profile Yet</h3>
+                <p class="empty-text">Create a flute profile first by recording your flute's fingerings</p>
+                <a href="/discover" class="btn btn-primary">Build Your Flute Profile</a>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Upload Section -->
+        <div class="card mb-3">
+            <form id="upload-form"
+                  hx-post="/upload"
+                  hx-target="#results"
+                  hx-encoding="multipart/form-data"
+                  hx-indicator="#loading">
+
+                <input type="hidden" name="profile_id" id="profile-id-input" value="{{ last_profile_id or '' }}">
+
+                <div class="upload-content">
+                    <label for="file-input" class="upload-area" id="upload-area">
+                        <div class="upload-icon">📄</div>
+                        <p class="upload-text">
+                            <strong>Click to upload</strong> or drag and drop<br>
+                            <span class="text-sm">PNG or JPG image of sheet music</span>
+                        </p>
+                    </label>
+                    <input type="file" name="file" id="file-input" class="file-input" accept=".png,.jpg,.jpeg" required>
+
+                    <div id="file-name" class="text-center mt-2 text-muted text-sm" style="display: none;"></div>
+
+                    <div class="text-center mt-2">
+                        <button type="submit" class="btn btn-primary btn-lg" id="submit-btn" disabled>
+                            Convert to Fingerings
+                        </button>
                     </div>
+                </div>
 
-                    <p class="help-text">
-                        Supported formats: PNG, JPG. Works with traditional sheet music and lead sheets.
-                    </p>
-
-                    <button type="submit" class="submit-btn">
-                        Convert to Fingerings
-                    </button>
-                </form>
-
-                <div id="loading" class="htmx-indicator">
+                <div id="loading" class="htmx-indicator loading">
                     <div class="spinner"></div>
-                    <p>Analyzing sheet music... This may take a moment.</p>
+                    <p>Analyzing sheet music...</p>
                 </div>
-            </section>
+            </form>
+        </div>
 
-            <section id="results">
-                <!-- Results will be loaded here via HTMX -->
-            </section>
+        <!-- Results will be loaded here -->
+        <div id="results"></div>
+    </main>
 
-            <section class="legend">
-                <h3>Fingering Legend</h3>
-                <div class="legend-items">
-                    <div class="legend-item">
-                        <span class="hole closed"></span>
-                        <span>Covered (closed)</span>
-                    </div>
-                    <div class="legend-item">
-                        <span class="hole open"></span>
-                        <span>Open</span>
-                    </div>
-                </div>
-                <p class="legend-note">
-                    Holes shown top to bottom: 1-2-3 (left hand) | 4-5-6 (right hand)
-                </p>
-            </section>
-        </main>
-
-        <footer>
-            <p>Flute Helper - Native American Flute Fingering Converter</p>
-        </footer>
-    </div>
+    <!-- Toast notification -->
+    <div id="toast" class="toast"></div>
 
     <script>
-        // Update file input label when file is selected
-        document.getElementById('file').addEventListener('change', function(e) {
-            const fileName = e.target.files[0]?.name || 'Choose an image...';
-            document.querySelector('.file-text').textContent = fileName;
+        // Profile selection
+        const profileSelect = document.getElementById('profile-select');
+        const profileIdInput = document.getElementById('profile-id-input');
+
+        if (profileSelect) {
+            profileSelect.addEventListener('change', (e) => {
+                profileIdInput.value = e.target.value;
+                // Save as last used
+                fetch('/api/settings/last-profile', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: 'profile_id=' + encodeURIComponent(e.target.value)
+                });
+            });
+        }
+
+        // File upload handling
+        const fileInput = document.getElementById('file-input');
+        const uploadArea = document.getElementById('upload-area');
+        const fileNameDisplay = document.getElementById('file-name');
+        const submitBtn = document.getElementById('submit-btn');
+
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                const fileName = e.target.files[0].name;
+                fileNameDisplay.textContent = 'Selected: ' + fileName;
+                fileNameDisplay.style.display = 'block';
+                submitBtn.disabled = !profileIdInput.value;
+            }
         });
+
+        // Drag and drop
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            if (e.dataTransfer.files.length > 0) {
+                fileInput.files = e.dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change'));
+            }
+        });
+
+        // Toast helper
+        function showToast(message) {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.classList.add('show');
+            setTimeout(() => toast.classList.remove('show'), 3000);
+        }
     </script>
 </body>
 </html>

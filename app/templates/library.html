@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Song Library - Flute Helper</title>
+    <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+    <header class="header">
+        <div class="container">
+            <div class="header-inner">
+                <a href="/" class="logo">
+                    <div class="logo-icon">♪</div>
+                    Flute Helper
+                </a>
+                <nav class="nav">
+                    <a href="/" class="nav-link">Convert</a>
+                    <a href="/discover" class="nav-link">Build Flute</a>
+                    <a href="/library" class="nav-link active">Library</a>
+                </nav>
+            </div>
+        </div>
+    </header>
+
+    <main class="container">
+        <div class="page-header">
+            <h1 class="page-title">Song Library</h1>
+            <p class="page-subtitle">Your saved song conversions</p>
+        </div>
+
+        {% if profiles %}
+        <!-- Filter by Profile -->
+        <div class="profile-selector mb-3">
+            <label>Filter by Flute:</label>
+            <select id="profile-filter" class="form-select" style="max-width: 200px;">
+                <option value="">All Flutes</option>
+                {% for id, profile in profiles.items() %}
+                <option value="{{ id }}">{{ profile.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        {% endif %}
+
+        <!-- Songs List -->
+        <div class="card">
+            {% if songs %}
+            <div class="songs-list" id="songs-list">
+                {% for song_id, song in songs.items() %}
+                {% set profile = profiles.get(song.profile_id, {}) %}
+                <div class="song-item" data-profile="{{ song.profile_id }}">
+                    <div class="song-info">
+                        <div class="song-title">{{ song.title }}</div>
+                        <div class="song-meta">
+                            {{ profile.name or 'Unknown flute' }}
+                            {% if song.key_signature %} • Key: {{ song.key_signature }}{% endif %}
+                            • {{ song.notes | length }} notes
+                        </div>
+                    </div>
+                    <div class="song-actions">
+                        <a href="/song/{{ song_id }}" class="btn btn-secondary btn-sm">View</a>
+                        <button onclick="deleteSong('{{ song_id }}', '{{ song.title | e }}')" class="btn btn-outline btn-sm">Delete</button>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="empty-state">
+                <div class="empty-icon">📚</div>
+                <h3 class="empty-title">No Songs Yet</h3>
+                <p class="empty-text">Convert some sheet music and save it to build your library</p>
+                <a href="/" class="btn btn-primary">Convert Sheet Music</a>
+            </div>
+            {% endif %}
+        </div>
+    </main>
+
+    <!-- Toast -->
+    <div id="toast" class="toast"></div>
+
+    <script>
+        // Filter songs by profile
+        const profileFilter = document.getElementById('profile-filter');
+        if (profileFilter) {
+            profileFilter.addEventListener('change', (e) => {
+                const profileId = e.target.value;
+                document.querySelectorAll('.song-item').forEach(item => {
+                    if (!profileId || item.dataset.profile === profileId) {
+                        item.style.display = 'flex';
+                    } else {
+                        item.style.display = 'none';
+                    }
+                });
+            });
+        }
+
+        // Delete song
+        async function deleteSong(songId, title) {
+            if (!confirm('Delete "' + title + '"?')) return;
+
+            try {
+                await fetch('/api/songs/' + songId, { method: 'DELETE' });
+                location.reload();
+            } catch (err) {
+                showToast('Error deleting song');
+            }
+        }
+
+        function showToast(msg) {
+            const t = document.getElementById('toast');
+            t.textContent = msg;
+            t.classList.add('show');
+            setTimeout(() => t.classList.remove('show'), 3000);
+        }
+    </script>
+</body>
+</html>

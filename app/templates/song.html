@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ song.title }} - Flute Helper</title>
+    <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+    <header class="header">
+        <div class="container">
+            <div class="header-inner">
+                <a href="/" class="logo">
+                    <div class="logo-icon">♪</div>
+                    Flute Helper
+                </a>
+                <nav class="nav">
+                    <a href="/" class="nav-link">Convert</a>
+                    <a href="/discover" class="nav-link">Build Flute</a>
+                    <a href="/library" class="nav-link active">Library</a>
+                </nav>
+            </div>
+        </div>
+    </header>
+
+    <main class="container">
+        <div class="page-header">
+            <h1 class="page-title">{{ song.title }}</h1>
+            {% if song.key_signature %}
+            <p class="page-subtitle">Key: {{ song.key_signature }}</p>
+            {% endif %}
+        </div>
+
+        <!-- Flute Profile Selector -->
+        <div class="profile-selector mb-3">
+            <label>Using Flute:</label>
+            <select id="profile-select" class="form-select" style="max-width: 200px;">
+                {% for id, p in profiles.items() %}
+                <option value="{{ id }}" {% if id == song.profile_id %}selected{% endif %}>
+                    {{ p.name }} ({{ p.fingerings | length }} notes)
+                </option>
+                {% endfor %}
+            </select>
+            <button onclick="changeProfile()" class="btn btn-secondary btn-sm">Apply</button>
+            <span id="profile-status" class="text-sm text-muted"></span>
+        </div>
+
+        <!-- Stats -->
+        <div class="card mb-3">
+            <div class="flex items-center justify-between" style="flex-wrap: wrap; gap: 16px;">
+                <div class="results-stats">
+                    <div class="stat">
+                        <div class="stat-value" id="total-notes">{{ song.notes | length }}</div>
+                        <div class="stat-label">Total Notes</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-value" id="playable-count">0</div>
+                        <div class="stat-label">Playable</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-value" id="missing-count">0</div>
+                        <div class="stat-label">Missing</div>
+                    </div>
+                </div>
+                <a href="/library" class="btn btn-outline">Back to Library</a>
+            </div>
+        </div>
+
+        <!-- Notes Grid -->
+        <div class="card">
+            <div class="results-grid" id="notes-grid">
+                <!-- Will be populated by JS -->
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Toast -->
+    <div id="toast" class="toast"></div>
+
+    <script>
+        const songNotes = {{ song.notes | tojson }};
+        const songId = '{{ song_id }}';
+        let currentProfileId = '{{ song.profile_id }}';
+        let profileFingerings = {};
+
+        // Load profile fingerings
+        async function loadProfileFingerings(profileId) {
+            try {
+                const res = await fetch('/api/fingerings/' + profileId);
+                profileFingerings = await res.json();
+                renderNotes();
+            } catch (err) {
+                console.error('Error loading fingerings:', err);
+            }
+        }
+
+        // Render notes grid
+        function renderNotes() {
+            const grid = document.getElementById('notes-grid');
+            let playable = 0;
+            let missing = 0;
+
+            grid.innerHTML = songNotes.map(note => {
+                const noteKey = note.note_key;
+                const fingering = profileFingerings[noteKey];
+
+                if (fingering) {
+                    playable++;
+                    const f = fingering.fingering;
+                    const symbols = f.map(h => h ? '●' : '○').join('');
+                    return `
+                        <div class="result-card">
+                            <div class="result-note">${noteKey}</div>
+                            <div class="result-diagram">
+                                <svg viewBox="0 0 24 80" width="24" height="80">
+                                    ${[0,1,2].map(i => `
+                                        <circle cx="12" cy="${8 + i * 12}" r="5"
+                                                stroke="#5d4e37" stroke-width="1.5"
+                                                fill="${f[i] ? '#5d4e37' : 'white'}"/>
+                                    `).join('')}
+                                    <line x1="4" y1="44" x2="20" y2="44" stroke="#e5e5e5" stroke-width="1"/>
+                                    ${[3,4,5].map(i => `
+                                        <circle cx="12" cy="${52 + (i - 3) * 12}" r="5"
+                                                stroke="#5d4e37" stroke-width="1.5"
+                                                fill="${f[i] ? '#5d4e37' : 'white'}"/>
+                                    `).join('')}
+                                </svg>
+                                <div class="result-fingering">${symbols}</div>
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    missing++;
+                    return `
+                        <div class="result-card not-playable">
+                            <div class="result-note">${noteKey}</div>
+                            <div class="result-missing">
+                                <span>?</span>
+                                <div class="text-sm">Not mapped</div>
+                            </div>
+                        </div>
+                    `;
+                }
+            }).join('');
+
+            document.getElementById('playable-count').textContent = playable;
+            document.getElementById('missing-count').textContent = missing;
+        }
+
+        // Change profile
+        async function changeProfile() {
+            const newProfileId = document.getElementById('profile-select').value;
+            if (newProfileId === currentProfileId) return;
+
+            try {
+                // Update song's profile
+                const formData = new FormData();
+                formData.append('profile_id', newProfileId);
+
+                await fetch('/api/songs/' + songId + '/profile', {
+                    method: 'PUT',
+                    body: formData
+                });
+
+                currentProfileId = newProfileId;
+                await loadProfileFingerings(newProfileId);
+
+                document.getElementById('profile-status').textContent = 'Updated!';
+                setTimeout(() => {
+                    document.getElementById('profile-status').textContent = '';
+                }, 2000);
+            } catch (err) {
+                showToast('Error changing profile');
+            }
+        }
+
+        function showToast(msg) {
+            const t = document.getElementById('toast');
+            t.textContent = msg;
+            t.classList.add('show');
+            setTimeout(() => t.classList.remove('show'), 3000);
+        }
+
+        // Initialize
+        loadProfileFingerings(currentProfileId);
+    </script>
+</body>
+</html>
