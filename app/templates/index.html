@@ -54,6 +54,31 @@
         </div>
         {% endif %}
 
+        <!-- Import Mode Selection -->
+        {% if profiles %}
+        <div class="card mb-3">
+            <div class="import-mode-selector">
+                <div class="import-mode-header">Import Mode</div>
+                <div class="import-mode-options">
+                    <label class="import-mode-option">
+                        <input type="radio" name="import_mode_select" value="standard" checked>
+                        <div class="import-mode-content">
+                            <div class="import-mode-title">Standard Import</div>
+                            <div class="import-mode-desc">Extract notes and show fingerings directly. Unmapped notes marked for review.</div>
+                        </div>
+                    </label>
+                    <label class="import-mode-option">
+                        <input type="radio" name="import_mode_select" value="ai">
+                        <div class="import-mode-content">
+                            <div class="import-mode-title">AI-Assisted Import</div>
+                            <div class="import-mode-desc">AI suggests optimal transposition and note substitutions for your specific flute.</div>
+                        </div>
+                    </label>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
         <!-- Upload Section -->
         <div class="card mb-3">
             <form id="upload-form"
@@ -62,6 +87,7 @@
                   hx-encoding="multipart/form-data">
 
                 <input type="hidden" name="profile_id" id="profile-id-input" value="{{ last_profile_id or '' }}">
+                <input type="hidden" name="import_mode" id="import-mode-input" value="standard">
 
                 <div class="upload-content">
                     <label for="file-input" class="upload-area" id="upload-area">
@@ -102,8 +128,14 @@
                             </div>
                             <div class="stage-text">Mapping notes to fingerings...</div>
                         </div>
+                        <div class="progress-stage ai-stage" id="stage-4" style="display: none;">
+                            <div class="stage-icon">
+                                <div class="stage-dot"></div>
+                            </div>
+                            <div class="stage-text">AI suggesting best arrangement...</div>
+                        </div>
                     </div>
-                    <p class="progress-note">This may take 10-20 seconds</p>
+                    <p class="progress-note">This may take <span id="time-estimate">10-20</span> seconds</p>
                 </div>
             </form>
         </div>
@@ -131,6 +163,26 @@
                 });
             });
         }
+
+        // Import mode selection
+        const importModeInput = document.getElementById('import-mode-input');
+        const importModeRadios = document.querySelectorAll('input[name="import_mode_select"]');
+        const aiStage = document.getElementById('stage-4');
+        const timeEstimate = document.getElementById('time-estimate');
+
+        importModeRadios.forEach(radio => {
+            radio.addEventListener('change', (e) => {
+                importModeInput.value = e.target.value;
+                // Show/hide AI stage and update time estimate
+                if (e.target.value === 'ai') {
+                    aiStage.style.display = 'flex';
+                    timeEstimate.textContent = '20-40';
+                } else {
+                    aiStage.style.display = 'none';
+                    timeEstimate.textContent = '10-20';
+                }
+            });
+        });
 
         // File upload handling
         const fileInput = document.getElementById('file-input');
@@ -179,6 +231,9 @@
 
         document.body.addEventListener('htmx:beforeRequest', function(e) {
             if (e.detail.elt.id === 'upload-form') {
+                const isAiMode = importModeInput.value === 'ai';
+                const maxStages = isAiMode ? 4 : 3;
+
                 // Reset stages
                 document.querySelectorAll('.progress-stage').forEach((s, i) => {
                     s.classList.remove('active', 'complete');
@@ -187,8 +242,9 @@
 
                 // Animate through stages
                 let currentStage = 1;
+                const stageTime = isAiMode ? 4000 : 3000; // More time per stage for AI mode
                 stageInterval = setInterval(() => {
-                    if (currentStage < 3) {
+                    if (currentStage < maxStages) {
                         // Mark current as complete
                         const current = document.getElementById('stage-' + currentStage);
                         current.classList.remove('active');
@@ -197,22 +253,26 @@
                         // Activate next
                         currentStage++;
                         const next = document.getElementById('stage-' + currentStage);
-                        next.classList.add('active');
+                        if (next) {
+                            next.classList.add('active');
+                        }
                     }
-                }, 3000); // Move to next stage every 3 seconds
+                }, stageTime);
             }
         });
 
         document.body.addEventListener('htmx:afterRequest', function(e) {
             if (e.detail.elt.id === 'upload-form') {
-                // Clear interval and mark all complete
+                // Clear interval and mark all visible stages complete
                 if (stageInterval) {
                     clearInterval(stageInterval);
                     stageInterval = null;
                 }
                 document.querySelectorAll('.progress-stage').forEach(s => {
-                    s.classList.remove('active');
-                    s.classList.add('complete');
+                    if (s.style.display !== 'none') {
+                        s.classList.remove('active');
+                        s.classList.add('complete');
+                    }
                 });
             }
         });

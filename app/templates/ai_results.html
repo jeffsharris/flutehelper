@@ -1,0 +1,201 @@
+{% if error %}
+<div class="card" style="text-align: center;">
+    <div class="empty-state">
+        <div class="empty-icon">&#9888;&#65039;</div>
+        <h3 class="empty-title">{{ error }}</h3>
+        <p class="empty-text">Please try again with a different image.</p>
+    </div>
+</div>
+{% else %}
+<div class="card mb-3">
+    <div class="results-header">
+        <div>
+            <h2 class="results-title">{{ title }}</h2>
+            <div class="ai-badge">AI-Suggested Arrangement</div>
+        </div>
+        <div class="results-stats">
+            <div class="stat">
+                <div class="stat-value">{{ note_count }}</div>
+                <div class="stat-label">Notes</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value">{{ playable_count }}</div>
+                <div class="stat-label">Playable</div>
+            </div>
+            {% if confidence > 0 %}
+            <div class="stat">
+                <div class="stat-value">{{ (confidence * 100)|round|int }}%</div>
+                <div class="stat-label">Confidence</div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Transposition Info -->
+    <div class="ai-transposition-info">
+        <div class="transposition-badge">
+            {% if transposition > 0 %}
+            Transposed +{{ transposition }} semitones
+            {% elif transposition < 0 %}
+            Transposed {{ transposition }} semitones
+            {% else %}
+            Original key (no transposition)
+            {% endif %}
+        </div>
+        {% if original_key and suggested_key %}
+        <div class="key-change">
+            {{ original_key }} &rarr; {{ suggested_key }}
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- AI Reasoning (collapsible) -->
+    <details class="ai-reasoning" open>
+        <summary class="ai-reasoning-header">
+            <span>AI Analysis</span>
+            <span class="expand-icon">&#9660;</span>
+        </summary>
+        <div class="ai-reasoning-content">
+            {% if ocr_corrections %}
+            <div class="reasoning-section ocr-corrections">
+                <strong>OCR Corrections:</strong>
+                <p>{{ ocr_corrections }}</p>
+            </div>
+            {% endif %}
+            {% if transposition_reasoning %}
+            <div class="reasoning-section">
+                <strong>Transposition:</strong>
+                <p>{{ transposition_reasoning }}</p>
+            </div>
+            {% endif %}
+            {% if musical_notes %}
+            <div class="reasoning-section">
+                <strong>Arrangement Notes:</strong>
+                <p>{{ musical_notes }}</p>
+            </div>
+            {% endif %}
+        </div>
+    </details>
+
+    {% if results %}
+    <div class="results-grid ai-results-grid">
+        {% for result in results %}
+        <div class="result-card {% if not result.playable %}not-playable{% endif %} {% if result.substitution_reason %}substituted{% endif %}">
+            <!-- Original note (small) -->
+            {% if result.original != result.suggested %}
+            <div class="result-original">{{ result.original }}</div>
+            {% endif %}
+
+            <!-- Suggested note (main) -->
+            <div class="result-note {% if result.original != result.suggested %}result-suggested{% endif %}">
+                {{ result.suggested }}
+            </div>
+
+            {% if result.playable and result.fingering %}
+            <div class="result-diagram">
+                <svg viewBox="0 0 24 84" width="24" height="84">
+                    {% for i in range(3) %}
+                    <circle cx="12" cy="{{ 8 + i * 12 }}" r="5"
+                            stroke="#5d4e37" stroke-width="1.5"
+                            fill="{% if result.fingering[i] %}#5d4e37{% else %}white{% endif %}"/>
+                    {% endfor %}
+                    <line x1="4" y1="44" x2="20" y2="44" stroke="#e5e5e5" stroke-width="1"/>
+                    {% for i in range(3, 6) %}
+                    <circle cx="12" cy="{{ 52 + (i - 3) * 12 }}" r="5"
+                            stroke="#5d4e37" stroke-width="1.5"
+                            fill="{% if result.fingering[i] %}#5d4e37{% else %}white{% endif %}"/>
+                    {% endfor %}
+                </svg>
+                <div class="result-fingering">
+                    {{ result.fingering | map('string') | map('replace', '1', '&#9679;') | map('replace', '0', '&#9675;') | join('') }}
+                </div>
+            </div>
+            {% else %}
+            <div class="result-missing">
+                <span>?</span>
+                <div class="text-sm">Not mapped</div>
+            </div>
+            {% endif %}
+
+            {% if result.substitution_reason %}
+            <div class="substitution-indicator" title="{{ result.substitution_reason }}">
+                &#8660;
+            </div>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- Save to Library -->
+    <div class="mt-3" style="border-top: 1px solid var(--border); padding-top: 20px;">
+        <div class="flex items-center justify-between gap-2" style="flex-wrap: wrap;">
+            <div>
+                <p class="text-muted text-sm">Save this AI-arranged version to your library</p>
+            </div>
+            <button onclick="saveAiSong()" class="btn btn-primary" id="save-song-btn">
+                Save to Library
+            </button>
+        </div>
+        <div id="save-song-status" class="status hidden mt-2"></div>
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <p class="empty-text">No notes could be extracted from the image. Try a clearer image.</p>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+    const songData = {
+        title: "{{ title | e }}",
+        profile_id: "{{ profile_id }}",
+        notes: {{ results | tojson if results else '[]' }},
+        original_key: "{{ original_key or '' }}",
+        suggested_key: "{{ suggested_key or '' }}",
+        transposition: {{ transposition }}
+    };
+
+    async function saveAiSong() {
+        const btn = document.getElementById('save-song-btn');
+        const status = document.getElementById('save-song-status');
+        btn.disabled = true;
+        btn.textContent = 'Saving...';
+
+        try {
+            // Save the suggested notes (AI-arranged version)
+            const notesData = songData.notes.map(r => ({
+                note_key: r.suggested,
+                original_note: r.original,
+                substitution_reason: r.substitution_reason
+            }));
+
+            const res = await fetch('/api/songs', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    title: songData.title + " (AI Arranged)",
+                    profile_id: songData.profile_id,
+                    notes: notesData,
+                    key_signature: songData.suggested_key,
+                    ai_arranged: true,
+                    transposition: songData.transposition
+                })
+            });
+            const data = await res.json();
+
+            if (data.success) {
+                status.textContent = 'Saved! View in Library';
+                status.className = 'status success';
+                btn.textContent = 'Saved';
+            } else {
+                throw new Error(data.error || 'Failed to save');
+            }
+        } catch (err) {
+            status.textContent = 'Error: ' + err.message;
+            status.className = 'status error';
+            btn.disabled = false;
+            btn.textContent = 'Save to Library';
+        }
+    }
+</script>
+{% endif %}

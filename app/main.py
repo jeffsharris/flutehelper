@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from .config import settings
 from .services.omr_service import OMRService
 from .services.fingering_mapper import FingeringMapper
+from .services.ai_suggestion import ai_suggestion_service
 from .services.music_utils import (
     transpose_notes, analyze_playability, find_optimal_transposition,
     find_nearest_playable, get_key_name
@@ -143,7 +144,8 @@ async def home(request: Request):
 async def upload_sheet_music(
     request: Request,
     file: UploadFile = File(...),
-    profile_id: str = Form(...)
+    profile_id: str = Form(...),
+    import_mode: str = Form("standard")
 ):
     """Process uploaded sheet music and return fingerings."""
     profiles = load_profiles()
@@ -188,7 +190,49 @@ async def upload_sheet_music(
         profile = profiles[profile_id]
         profile_fingerings = profile.get("fingerings", {})
 
-        # Map notes to fingerings using profile
+        # AI-Assisted Import Mode
+        if import_mode == "ai":
+            # Get AI suggestions for optimal arrangement
+            # Pass the original image so AI can verify OCR results visually
+            ai_suggestion = ai_suggestion_service.get_suggestions(
+                extracted_music, profile_fingerings, image_path=tmp_path
+            )
+
+            # Build results with AI suggestions
+            ai_results = []
+            for mapping in ai_suggestion.note_mappings:
+                # Get fingering for the suggested note
+                fingering_data = profile_fingerings.get(mapping.suggested)
+                ai_results.append({
+                    "original": mapping.original,
+                    "transposed": mapping.transposed,
+                    "suggested": mapping.suggested,
+                    "playable": mapping.playable,
+                    "substitution_reason": mapping.substitution_reason,
+                    "fingering": fingering_data.get("fingering") if fingering_data else None
+                })
+
+            playable_count = sum(1 for r in ai_results if r["playable"])
+
+            return templates.TemplateResponse("ai_results.html", {
+                "request": request,
+                "title": extracted_music.title or file.filename,
+                "original_key": ai_suggestion.original_key,
+                "suggested_key": ai_suggestion.suggested_key,
+                "transposition": ai_suggestion.recommended_transposition,
+                "transposition_reasoning": ai_suggestion.transposition_reasoning,
+                "musical_notes": ai_suggestion.musical_notes,
+                "ocr_corrections": ai_suggestion.ocr_corrections,
+                "results": ai_results,
+                "confidence": extracted_music.confidence,
+                "note_count": len(ai_results),
+                "playable_count": playable_count,
+                "profile_id": profile_id,
+                "profile_name": profile.get("name", "Unknown"),
+                "profiles": profiles
+            })
+
+        # Standard Import Mode
         results = []
         for note in extracted_music.notes:
             note_key = f"{note.name.value}"
