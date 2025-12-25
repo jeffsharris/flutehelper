@@ -59,8 +59,7 @@
             <form id="upload-form"
                   hx-post="/upload"
                   hx-target="#results"
-                  hx-encoding="multipart/form-data"
-                  hx-indicator="#loading">
+                  hx-encoding="multipart/form-data">
 
                 <input type="hidden" name="profile_id" id="profile-id-input" value="{{ last_profile_id or '' }}">
 

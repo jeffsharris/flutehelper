@@ -1064,14 +1064,15 @@ a:hover {
     display: none;
 }
 
-.htmx-request .htmx-indicator {
+/* When form is making a request, show the indicator and hide upload content */
+#upload-form.htmx-request .htmx-indicator {
     display: flex;
     flex-direction: column;
     align-items: center;
     padding: 32px 20px;
 }
 
-.htmx-request .upload-content {
+#upload-form.htmx-request .upload-content {
     display: none;
 }
 
