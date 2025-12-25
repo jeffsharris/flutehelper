@@ -5,6 +5,161 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ song.title }} - Flute Helper</title>
     <link rel="stylesheet" href="/static/css/styles.css">
+    <style>
+        /* Transposition-specific styles */
+        .transpose-controls {
+            background: var(--bg);
+            border-radius: var(--radius);
+            padding: 16px 20px;
+            margin-bottom: 16px;
+        }
+
+        .transpose-row {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+
+        .transpose-select {
+            min-width: 280px;
+        }
+
+        .transpose-option {
+            display: flex;
+            justify-content: space-between;
+            gap: 20px;
+        }
+
+        .recommendation-banner {
+            background: var(--success-light);
+            border: 1px solid var(--success);
+            border-radius: var(--radius);
+            padding: 16px 20px;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+
+        .recommendation-banner.hidden {
+            display: none;
+        }
+
+        .recommendation-text {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .recommendation-icon {
+            font-size: 1.5rem;
+        }
+
+        .recommendation-stats {
+            display: flex;
+            gap: 16px;
+            font-size: 0.9rem;
+        }
+
+        .stat-comparison {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 8px 16px;
+            background: white;
+            border-radius: var(--radius-sm);
+        }
+
+        .stat-comparison .old {
+            color: var(--text-muted);
+            text-decoration: line-through;
+        }
+
+        .stat-comparison .new {
+            color: var(--success);
+            font-weight: 600;
+            font-size: 1.1rem;
+        }
+
+        .stat-comparison .label {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+
+        /* Note card with suggestion */
+        .result-card.has-suggestion {
+            background: var(--warning-light);
+            border: 1px solid var(--warning);
+        }
+
+        .suggestion-info {
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px dashed var(--warning);
+        }
+
+        .suggestion-arrow {
+            color: var(--success);
+            font-weight: 600;
+            font-size: 0.8rem;
+        }
+
+        .suggestion-note {
+            font-weight: 600;
+            color: var(--success);
+        }
+
+        .suggestion-diagram {
+            margin-top: 4px;
+        }
+
+        .suggestion-diagram svg {
+            opacity: 0.7;
+        }
+
+        .original-note-badge {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            background: var(--bg);
+            padding: 2px 6px;
+            border-radius: 3px;
+            margin-top: 4px;
+        }
+
+        .key-display {
+            font-size: 0.9rem;
+            color: var(--text-muted);
+        }
+
+        .key-display .transposed {
+            color: var(--success);
+            font-weight: 500;
+        }
+
+        .loading-overlay {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 60px;
+            color: var(--text-muted);
+        }
+
+        .toggle-suggestions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
+        .toggle-suggestions input {
+            width: 18px;
+            height: 18px;
+        }
+    </style>
 </head>
 <body>
     <header class="header">
@@ -26,9 +181,9 @@
     <main class="container">
         <div class="page-header">
             <h1 class="page-title">{{ song.title }}</h1>
-            {% if song.key_signature %}
-            <p class="page-subtitle">Key: {{ song.key_signature }}</p>
-            {% endif %}
+            <p class="page-subtitle key-display" id="key-display">
+                Key: <span id="current-key">{{ song.key_signature or 'Unknown' }}</span>
+            </p>
         </div>
 
         <!-- Flute Profile Selector -->
@@ -41,12 +196,39 @@
                 </option>
                 {% endfor %}
             </select>
-            <button onclick="changeProfile()" class="btn btn-secondary btn-sm">Apply</button>
-            <span id="profile-status" class="text-sm text-muted"></span>
         </div>
 
-        <!-- Stats -->
+        <!-- Recommendation Banner (shown when better transposition exists) -->
+        <div class="recommendation-banner hidden" id="recommendation-banner">
+            <div class="recommendation-text">
+                <span class="recommendation-icon">💡</span>
+                <div>
+                    <strong>Better key available!</strong>
+                    <div id="recommendation-detail" class="text-sm text-muted"></div>
+                </div>
+            </div>
+            <div class="recommendation-stats" id="recommendation-stats"></div>
+            <button class="btn btn-success btn-sm" id="apply-recommendation">
+                Apply Transposition
+            </button>
+        </div>
+
+        <!-- Transposition Controls -->
         <div class="card mb-3">
+            <div class="transpose-controls">
+                <div class="transpose-row">
+                    <label style="font-weight: 500;">Transpose:</label>
+                    <select id="transpose-select" class="form-select transpose-select">
+                        <option value="0">Loading options...</option>
+                    </select>
+                    <label class="toggle-suggestions">
+                        <input type="checkbox" id="show-suggestions" checked>
+                        Show suggestions for missing notes
+                    </label>
+                </div>
+            </div>
+
+            <!-- Stats -->
             <div class="flex items-center justify-between" style="flex-wrap: wrap; gap: 16px;">
                 <div class="results-stats">
                     <div class="stat">
@@ -54,11 +236,11 @@
                         <div class="stat-label">Total Notes</div>
                     </div>
                     <div class="stat">
-                        <div class="stat-value" id="playable-count">0</div>
+                        <div class="stat-value" id="playable-count">-</div>
                         <div class="stat-label">Playable</div>
                     </div>
                     <div class="stat">
-                        <div class="stat-value" id="missing-count">0</div>
+                        <div class="stat-value" id="missing-count">-</div>
                         <div class="stat-label">Missing</div>
                     </div>
                 </div>
@@ -69,7 +251,9 @@
         <!-- Notes Grid -->
         <div class="card">
             <div class="results-grid" id="notes-grid">
-                <!-- Will be populated by JS -->
+                <div class="loading-overlay">
+                    <div class="spinner"></div>
+                </div>
             </div>
         </div>
 
@@ -79,100 +263,227 @@
     <div id="toast" class="toast"></div>
 
     <script>
-        const songNotes = {{ song.notes | tojson }};
         const songId = '{{ song_id }}';
         let currentProfileId = '{{ song.profile_id }}';
-        let profileFingerings = {};
+        let currentSemitones = 0;
+        let transpositionOptions = [];
+        let bestOption = null;
+        let showSuggestions = true;
 
-        // Load profile fingerings
-        async function loadProfileFingerings(profileId) {
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            loadAnalysis();
+
+            document.getElementById('profile-select').addEventListener('change', (e) => {
+                currentProfileId = e.target.value;
+                currentSemitones = 0;
+                loadAnalysis();
+            });
+
+            document.getElementById('transpose-select').addEventListener('change', (e) => {
+                currentSemitones = parseInt(e.target.value);
+                loadTransposedSong();
+            });
+
+            document.getElementById('show-suggestions').addEventListener('change', (e) => {
+                showSuggestions = e.target.checked;
+                loadTransposedSong();
+            });
+
+            document.getElementById('apply-recommendation').addEventListener('click', () => {
+                if (bestOption) {
+                    currentSemitones = bestOption.semitones;
+                    document.getElementById('transpose-select').value = bestOption.semitones;
+                    loadTransposedSong();
+                }
+            });
+        });
+
+        async function loadAnalysis() {
             try {
-                const res = await fetch('/api/fingerings/' + profileId);
-                profileFingerings = await res.json();
-                renderNotes();
+                const res = await fetch(`/api/songs/${songId}/analyze/${currentProfileId}`);
+                const data = await res.json();
+
+                if (data.error) {
+                    showToast(data.error);
+                    return;
+                }
+
+                transpositionOptions = data.transposition_options;
+                bestOption = data.best_option;
+
+                // Populate transpose dropdown
+                const select = document.getElementById('transpose-select');
+                select.innerHTML = transpositionOptions.map(opt => {
+                    const current = opt.semitones === 0 ? ' (original)' : '';
+                    const best = opt === bestOption && opt.semitones !== 0 ? ' ★' : '';
+                    return `<option value="${opt.semitones}">
+                        ${opt.label}${current}${best} — ${opt.playable}/${opt.total} playable (${opt.percentage}%)
+                    </option>`;
+                }).join('');
+                select.value = currentSemitones;
+
+                // Show recommendation if better option exists
+                const banner = document.getElementById('recommendation-banner');
+                const originalOption = transpositionOptions.find(o => o.semitones === 0);
+
+                if (bestOption && bestOption.semitones !== 0 && originalOption &&
+                    bestOption.playable > originalOption.playable) {
+
+                    const improvement = bestOption.playable - originalOption.playable;
+                    document.getElementById('recommendation-detail').textContent =
+                        `Transposing ${bestOption.label} adds ${improvement} more playable notes`;
+
+                    document.getElementById('recommendation-stats').innerHTML = `
+                        <div class="stat-comparison">
+                            <span class="old">${originalOption.playable}</span>
+                            <span class="new">${bestOption.playable}</span>
+                            <span class="label">Playable</span>
+                        </div>
+                        <div class="stat-comparison">
+                            <span class="old">${originalOption.missing_count}</span>
+                            <span class="new">${bestOption.missing_count}</span>
+                            <span class="label">Missing</span>
+                        </div>
+                    `;
+
+                    banner.classList.remove('hidden');
+                } else {
+                    banner.classList.add('hidden');
+                }
+
+                // Load the song with current transposition
+                loadTransposedSong();
+
             } catch (err) {
-                console.error('Error loading fingerings:', err);
+                console.error('Error loading analysis:', err);
+                showToast('Error loading song analysis');
             }
         }
 
-        // Render notes grid
-        function renderNotes() {
+        async function loadTransposedSong() {
             const grid = document.getElementById('notes-grid');
-            let playable = 0;
-            let missing = 0;
+            grid.innerHTML = '<div class="loading-overlay"><div class="spinner"></div></div>';
 
-            grid.innerHTML = songNotes.map(note => {
+            try {
+                const res = await fetch(
+                    `/api/songs/${songId}/transposed/${currentProfileId}?semitones=${currentSemitones}`
+                );
+                const data = await res.json();
+
+                if (data.error) {
+                    showToast(data.error);
+                    return;
+                }
+
+                // Update key display
+                const keyDisplay = document.getElementById('current-key');
+                if (currentSemitones !== 0) {
+                    keyDisplay.innerHTML = `<span class="transposed">${data.transposed_key}</span>
+                        <span class="text-sm">(from ${data.original_key})</span>`;
+                } else {
+                    keyDisplay.textContent = data.original_key || 'Unknown';
+                }
+
+                // Update stats
+                document.getElementById('playable-count').textContent = data.stats.playable;
+                document.getElementById('missing-count').textContent = data.stats.missing_count;
+
+                // Hide recommendation if we're at the best option
+                if (currentSemitones === bestOption?.semitones) {
+                    document.getElementById('recommendation-banner').classList.add('hidden');
+                }
+
+                // Render notes
+                renderNotes(data.notes);
+
+            } catch (err) {
+                console.error('Error loading transposed song:', err);
+                showToast('Error loading song');
+            }
+        }
+
+        function renderNotes(notes) {
+            const grid = document.getElementById('notes-grid');
+
+            grid.innerHTML = notes.map(note => {
                 const noteKey = note.note_key;
-                const fingering = profileFingerings[noteKey];
+                const originalKey = note.original_note_key;
+                const fingering = note.fingering;
+                const suggestion = note.suggestion;
+                const playable = note.playable;
 
-                if (fingering) {
-                    playable++;
-                    const f = fingering.fingering;
-                    const symbols = f.map(h => h ? '●' : '○').join('');
-                    return `
-                        <div class="result-card">
-                            <div class="result-note">${noteKey}</div>
-                            <div class="result-diagram">
-                                <svg viewBox="0 0 24 84" width="24" height="84">
-                                    ${[0,1,2].map(i => `
-                                        <circle cx="12" cy="${8 + i * 12}" r="5"
-                                                stroke="#5d4e37" stroke-width="1.5"
-                                                fill="${f[i] ? '#5d4e37' : 'white'}"/>
-                                    `).join('')}
-                                    <line x1="4" y1="44" x2="20" y2="44" stroke="#e5e5e5" stroke-width="1"/>
-                                    ${[3,4,5].map(i => `
-                                        <circle cx="12" cy="${52 + (i - 3) * 12}" r="5"
-                                                stroke="#5d4e37" stroke-width="1.5"
-                                                fill="${f[i] ? '#5d4e37' : 'white'}"/>
-                                    `).join('')}
-                                </svg>
-                                <div class="result-fingering">${symbols}</div>
+                // Determine card class
+                let cardClass = 'result-card';
+                if (!playable) {
+                    cardClass += suggestion && showSuggestions ? ' has-suggestion' : ' not-playable';
+                }
+
+                // Build card content
+                let content = `<div class="result-note">${noteKey}</div>`;
+
+                // Show original note if transposed
+                if (originalKey) {
+                    content += `<div class="original-note-badge">was ${originalKey}</div>`;
+                }
+
+                if (playable && fingering) {
+                    content += renderFingering(fingering);
+                } else if (suggestion && showSuggestions) {
+                    // Show suggestion
+                    content += `
+                        <div class="result-missing">
+                            <span>?</span>
+                        </div>
+                        <div class="suggestion-info">
+                            <div class="suggestion-arrow">
+                                → try <span class="suggestion-note">${suggestion.suggestion}</span>
+                                <span class="text-sm">(${suggestion.distance > 0 ? '+' : ''}${suggestion.distance})</span>
+                            </div>
+                            <div class="suggestion-diagram">
+                                ${renderFingeringSvg(suggestion.fingering)}
                             </div>
                         </div>
                     `;
                 } else {
-                    missing++;
-                    return `
-                        <div class="result-card not-playable">
-                            <div class="result-note">${noteKey}</div>
-                            <div class="result-missing">
-                                <span>?</span>
-                                <div class="text-sm">Not mapped</div>
-                            </div>
+                    content += `
+                        <div class="result-missing">
+                            <span>?</span>
+                            <div class="text-sm">Not mapped</div>
                         </div>
                     `;
                 }
-            }).join('');
 
-            document.getElementById('playable-count').textContent = playable;
-            document.getElementById('missing-count').textContent = missing;
+                return `<div class="${cardClass}">${content}</div>`;
+            }).join('');
         }
 
-        // Change profile
-        async function changeProfile() {
-            const newProfileId = document.getElementById('profile-select').value;
-            if (newProfileId === currentProfileId) return;
+        function renderFingering(f) {
+            const symbols = f.map(h => h ? '●' : '○').join('');
+            return `
+                <div class="result-diagram">
+                    ${renderFingeringSvg(f)}
+                    <div class="result-fingering">${symbols}</div>
+                </div>
+            `;
+        }
 
-            try {
-                // Update song's profile
-                const formData = new FormData();
-                formData.append('profile_id', newProfileId);
-
-                await fetch('/api/songs/' + songId + '/profile', {
-                    method: 'PUT',
-                    body: formData
-                });
-
-                currentProfileId = newProfileId;
-                await loadProfileFingerings(newProfileId);
-
-                document.getElementById('profile-status').textContent = 'Updated!';
-                setTimeout(() => {
-                    document.getElementById('profile-status').textContent = '';
-                }, 2000);
-            } catch (err) {
-                showToast('Error changing profile');
-            }
+        function renderFingeringSvg(f) {
+            return `
+                <svg viewBox="0 0 24 84" width="24" height="84">
+                    ${[0,1,2].map(i => `
+                        <circle cx="12" cy="${8 + i * 12}" r="5"
+                                stroke="#5d4e37" stroke-width="1.5"
+                                fill="${f[i] ? '#5d4e37' : 'white'}"/>
+                    `).join('')}
+                    <line x1="4" y1="44" x2="20" y2="44" stroke="#e5e5e5" stroke-width="1"/>
+                    ${[3,4,5].map(i => `
+                        <circle cx="12" cy="${52 + (i - 3) * 12}" r="5"
+                                stroke="#5d4e37" stroke-width="1.5"
+                                fill="${f[i] ? '#5d4e37' : 'white'}"/>
+                    `).join('')}
+                </svg>
+            `;
         }
 
         function showToast(msg) {
@@ -181,9 +492,6 @@
             t.classList.add('show');
             setTimeout(() => t.classList.remove('show'), 3000);
         }
-
-        // Initialize
-        loadProfileFingerings(currentProfileId);
     </script>
 </body>
 </html>

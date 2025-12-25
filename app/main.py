@@ -15,6 +15,10 @@ from pydantic import BaseModel
 from .config import settings
 from .services.omr_service import OMRService
 from .services.fingering_mapper import FingeringMapper
+from .services.music_utils import (
+    transpose_notes, analyze_playability, find_optimal_transposition,
+    find_nearest_playable, get_key_name
+)
 
 app = FastAPI(
     title="Flute Helper",
@@ -440,3 +444,98 @@ async def set_last_profile(profile_id: str = Form(...)):
     app_settings["last_profile"] = profile_id
     save_settings(app_settings)
     return {"success": True}
+
+
+# ===== Transposition API =====
+
+@app.get("/api/songs/{song_id}/analyze/{profile_id}")
+async def analyze_song_transposition(song_id: str, profile_id: str):
+    """
+    Analyze transposition options for a song with a given flute profile.
+    Returns playability stats for each transposition option.
+    """
+    songs = load_songs()
+    profiles = load_profiles()
+
+    if song_id not in songs:
+        return {"error": "Song not found"}
+    if profile_id not in profiles:
+        return {"error": "Profile not found"}
+
+    song = songs[song_id]
+    fingerings = profiles[profile_id].get("fingerings", {})
+
+    # Get transposition options
+    options = find_optimal_transposition(song["notes"], fingerings)
+
+    # Get current (original) playability
+    current_stats = analyze_playability(song["notes"], fingerings)
+
+    return {
+        "song_id": song_id,
+        "profile_id": profile_id,
+        "original_key": song.get("key_signature", "Unknown"),
+        "current_stats": current_stats,
+        "transposition_options": options,
+        "best_option": options[0] if options else None
+    }
+
+
+@app.get("/api/songs/{song_id}/transposed/{profile_id}")
+async def get_transposed_song(song_id: str, profile_id: str, semitones: int = 0):
+    """
+    Get song notes transposed by given semitones, with playability info.
+    """
+    songs = load_songs()
+    profiles = load_profiles()
+
+    if song_id not in songs:
+        return {"error": "Song not found"}
+    if profile_id not in profiles:
+        return {"error": "Profile not found"}
+
+    song = songs[song_id]
+    fingerings = profiles[profile_id].get("fingerings", {})
+
+    # Transpose notes
+    transposed_notes = transpose_notes(song["notes"], semitones)
+
+    # Add playability and suggestions to each note
+    result_notes = []
+    for note in transposed_notes:
+        note_key = note["note_key"]
+        original_key = note.get("original_note_key", note_key)
+
+        note_result = {
+            "note_key": note_key,
+            "original_note_key": original_key if semitones != 0 else None,
+            "playable": note_key in fingerings,
+            "fingering": None,
+            "suggestion": None
+        }
+
+        if note_key in fingerings:
+            note_result["fingering"] = fingerings[note_key]["fingering"]
+        else:
+            # Find nearest playable note
+            suggestion = find_nearest_playable(note_key, fingerings)
+            if suggestion:
+                note_result["suggestion"] = suggestion
+
+        result_notes.append(note_result)
+
+    # Calculate stats
+    stats = analyze_playability(transposed_notes, fingerings)
+
+    # Get new key name
+    new_key = get_key_name(song.get("key_signature", ""), semitones)
+
+    return {
+        "song_id": song_id,
+        "title": song["title"],
+        "original_key": song.get("key_signature"),
+        "transposed_key": new_key,
+        "semitones": semitones,
+        "notes": result_notes,
+        "stats": stats
+    }

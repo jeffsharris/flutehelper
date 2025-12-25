@@ -104,11 +104,9 @@
         btn.textContent = 'Saving...';
 
         try {
-            // Convert notes to serializable format
+            // Save only note_key - fingerings are calculated dynamically per flute
             const notesData = songData.notes.map(r => ({
-                note_key: r.note_key,
-                fingering: r.fingering,
-                playable: r.playable
+                note_key: r.note_key
             }));
 
             const res = await fetch('/api/songs', {

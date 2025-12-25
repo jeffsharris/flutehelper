@@ -29,3 +29,6 @@ htmlcov/
 # Temp files
 *.tmp
 *.temp
+
+# User data
+app/data/*.json
