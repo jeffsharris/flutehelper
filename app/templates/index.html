@@ -152,8 +152,7 @@
                     AI Reasoning
                 </div>
                 <div class="streaming-status" id="streaming-status">
-                    <div class="spinner-small"></div>
-                    <span>Thinking...</span>
+                    <span>Waiting to start</span>
                 </div>
             </div>
             <div class="streaming-progress">
@@ -161,7 +160,7 @@
                 <div class="streaming-log" id="streaming-log"></div>
             </div>
             <div class="streaming-content" id="streaming-content">
-                <div class="streaming-text" id="streaming-text"></div>
+                <div class="streaming-text" id="streaming-text" data-placeholder="Reasoning will appear once the model starts."></div>
             </div>
         </div>
 
@@ -306,6 +305,7 @@
         const uploadForm = document.getElementById('upload-form');
         let streamStart = null;
         let streamingStages = new Set();
+        let reasoningStarted = false;
 
         uploadForm.addEventListener('submit', async function(e) {
             const isAiMode = importModeInput.value === 'ai';
@@ -333,11 +333,16 @@
             // Show streaming panel and loading
             streamingPanel.style.display = 'block';
             streamingText.textContent = '';
+            streamingText.classList.remove('is-active', 'is-complete', 'is-error');
+            streamingText.dataset.placeholder = 'Reasoning will appear once the model starts.';
+            reasoningStarted = false;
+            streamingStatus.innerHTML = '<div class="spinner-small"></div><span>Preparing upload...</span>';
             if (streamingLog) {
                 streamingLog.innerHTML = '';
             }
             streamStart = performance.now();
             streamingStages = new Set();
+            appendStreamingLog({ message: 'Preparing request...', stage: 'client_start' }, false);
             loadingDiv.classList.add('htmx-request');
             resultsDiv.innerHTML = '';
 
@@ -385,7 +390,12 @@
             } catch (err) {
                 console.error('Streaming error:', err);
                 loadingDiv.classList.remove('htmx-request');
-                resultsDiv.innerHTML = `<div class="card"><div class="empty-state"><div class="empty-icon">&#9888;&#65039;</div><h3 class="empty-title">Error: ${err.message}</h3></div></div>`;
+                streamingText.classList.remove('is-active');
+                streamingText.classList.add('is-error');
+                streamingText.dataset.placeholder = 'Reasoning stopped due to an error.';
+                streamingStatus.innerHTML = `<span style="color: var(--error);">&#10007; Error</span>`;
+                appendStreamingLog({ message: `Network error: ${err.message}`, stage: 'network_error' }, true);
+                resultsDiv.innerHTML = `<div class="card"><div class="empty-state"><div class="empty-icon">&#9888;&#65039;</div><h3 class="empty-title">Error: ${escapeHtml(err.message)}</h3></div></div>`;
             }
         }
 
@@ -397,10 +407,19 @@
                     const elapsed = resolveElapsed(statusData.elapsed_ms);
                     streamingStatus.innerHTML = `<div class="spinner-small"></div><span>${escapeHtml(statusData.message)}${elapsed ? ` (${elapsed})` : ''}</span>`;
                     appendStreamingLog(statusData, false);
+                    if (statusData.stage === 'reasoning_streaming') {
+                        streamingText.classList.add('is-active');
+                        streamingText.dataset.placeholder = 'Receiving reasoning summary...';
+                    }
                     break;
 
                 case 'reasoning':
                     // Append reasoning text with typewriter effect
+                    if (!reasoningStarted) {
+                        reasoningStarted = true;
+                        streamingText.classList.add('is-active');
+                        streamingText.dataset.placeholder = 'Receiving reasoning summary...';
+                    }
                     streamingText.textContent += event.data;
                     // Auto-scroll
                     const content = document.getElementById('streaming-content');
@@ -416,6 +435,11 @@
                     });
                     streamingStatus.innerHTML = '<span style="color: var(--success);">&#10003; Complete</span>';
                     appendStreamingLog({ message: 'Complete', stage: 'complete' }, false);
+                    streamingText.classList.remove('is-active');
+                    streamingText.classList.add('is-complete');
+                    if (!streamingText.textContent.trim()) {
+                        streamingText.dataset.placeholder = 'No reasoning summary was returned.';
+                    }
 
                     // Render the results
                     renderAiResults(event.data, resultsDiv);
@@ -427,6 +451,11 @@
                     const errorElapsed = resolveElapsed(errorData.elapsed_ms);
                     streamingStatus.innerHTML = `<span style="color: var(--error);">&#10007; Error${errorElapsed ? ` (${errorElapsed})` : ''}</span>`;
                     appendStreamingLog(errorData, true);
+                    streamingText.classList.remove('is-active');
+                    streamingText.classList.add('is-error');
+                    if (!streamingText.textContent.trim()) {
+                        streamingText.dataset.placeholder = 'Reasoning stopped due to an error.';
+                    }
                     resultsDiv.innerHTML = `<div class="card"><div class="empty-state"><div class="empty-icon">&#9888;&#65039;</div><h3 class="empty-title">${escapeHtml(errorData.message)}</h3></div></div>`;
                     break;
             }

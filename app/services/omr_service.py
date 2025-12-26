@@ -19,7 +19,7 @@ Usage:
 from typing import Optional
 
 from ..models.notes import ExtractedMusic
-from .ai_vision import AIVisionOMR
+from .ai_vision import AIVisionOMR, OMRServiceError
 
 
 class OMRService:
@@ -60,3 +60,6 @@ class OMRService:
 
         # Return empty result if extraction fails
         return ExtractedMusic(notes=[], confidence=0.0)
+
+
+__all__ = ["OMRService", "OMRServiceError"]

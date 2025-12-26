@@ -44,7 +44,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from .config import settings
-from .services.omr_service import OMRService
+from .services.omr_service import OMRService, OMRServiceError
 from .services.ai_suggestion import ai_suggestion_service, StreamEvent
 from .services.music_utils import (
     transpose_notes, analyze_playability, find_optimal_transposition,
@@ -361,7 +361,14 @@ async def upload_sheet_music_streaming(
                 "status",
                 _status_payload("Extracting notes from image...", "extracting_notes", start_time),
             )
-            extracted_music = await omr_service.process_image(tmp_path)
+            try:
+                extracted_music = await omr_service.process_image(tmp_path)
+            except OMRServiceError as exc:
+                yield _sse_event(
+                    "error",
+                    _status_payload(str(exc), "omr_error", start_time),
+                )
+                return
 
             profile = profiles[profile_id]
             profile_fingerings = profile.get("fingerings", {})

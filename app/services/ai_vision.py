@@ -25,6 +25,7 @@ import json
 import re
 from typing import Optional
 
+import openai
 from openai import OpenAI
 
 from ..config import settings
@@ -56,6 +57,10 @@ Rules:
 7. Include all notes, even repeated ones
 
 Return ONLY the JSON object, no other text or markdown formatting."""
+
+
+class OMRServiceError(RuntimeError):
+    """Raised when the OMR service cannot complete a request."""
 
 
 class AIVisionOMR:
@@ -111,27 +116,30 @@ class AIVisionOMR:
         media_type = get_media_type(image_path)
 
         # Call the API
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:{media_type};base64,{image_data}"
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:{media_type};base64,{image_data}"
+                                }
+                            },
+                            {
+                                "type": "text",
+                                "text": OMR_PROMPT
                             }
-                        },
-                        {
-                            "type": "text",
-                            "text": OMR_PROMPT
-                        }
-                    ],
-                }
-            ],
-            max_completion_tokens=4096,
-        )
+                        ],
+                    }
+                ],
+                max_completion_tokens=4096,
+            )
+        except Exception as exc:
+            raise OMRServiceError(self._format_error_message(exc)) from exc
 
         response_text = response.choices[0].message.content
         return self._parse_response(response_text)
@@ -216,3 +224,18 @@ class AIVisionOMR:
             octave=int(note_data.get("octave", 4)),
             accidental=accidental
         )
+
+    def _format_error_message(self, exc: Exception) -> str:
+        """Return a user-facing error message for vision failures."""
+        if hasattr(openai, "APITimeoutError") and isinstance(exc, openai.APITimeoutError):
+            return (
+                f"AI vision request timed out after {settings.OPENAI_TIMEOUT_SECONDS}s "
+                "while extracting notes."
+            )
+        if hasattr(openai, "RateLimitError") and isinstance(exc, openai.RateLimitError):
+            return "AI vision request was rate limited. Please try again in a moment."
+        if hasattr(openai, "APIConnectionError") and isinstance(exc, openai.APIConnectionError):
+            return "Could not connect to the AI vision service. Please check your connection and try again."
+        if hasattr(openai, "APIError") and isinstance(exc, openai.APIError):
+            return "AI vision service returned an error. Please try again."
+        return f"AI vision request failed: {exc}"

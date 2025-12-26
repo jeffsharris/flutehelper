@@ -1628,16 +1628,22 @@ a:hover {
 }
 
 .streaming-text:empty::before {
-    content: "Waiting for AI reasoning...";
+    content: attr(data-placeholder);
     color: var(--text-muted);
     font-style: italic;
 }
 
-/* Blinking cursor effect */
-.streaming-text::after {
+/* Blinking cursor effect (only while streaming) */
+.streaming-text.is-active::after {
     content: "▋";
     animation: blink 1s infinite;
     color: var(--primary);
+}
+
+.streaming-text.is-error::after,
+.streaming-text.is-complete::after {
+    content: "";
+    animation: none;
 }
 
 @keyframes blink {
