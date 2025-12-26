@@ -33,6 +33,12 @@ class AISuggestion:
     suggested_key: Optional[str] = None  # Key after transposition
     ocr_corrections: Optional[str] = None  # Description of any OCR errors corrected
     reasoning_summary: Optional[str] = None  # AI's reasoning process summary
+    # Debug information
+    debug_raw_response: Optional[str] = None  # Raw text from AI
+    debug_parse_error: Optional[str] = None  # Any parsing error message
+    debug_model_used: Optional[str] = None  # Which model was used
+    debug_input_notes: Optional[List[str]] = None  # Notes sent to AI
+    debug_available_notes: Optional[List[str]] = None  # Available flute notes
 
 
 class AISuggestionService:
@@ -121,7 +127,15 @@ class AISuggestionService:
         # Get the text response
         response_text = response.output_text
 
-        return self._parse_response(response_text, extracted_music.key_signature, reasoning_summary)
+        # Prepare debug info
+        debug_info = {
+            "raw_response": response_text,
+            "model_used": self.model,
+            "input_notes": note_list,
+            "available_notes": available_notes
+        }
+
+        return self._parse_response(response_text, extracted_music.key_signature, reasoning_summary, debug_info)
 
     def _encode_image(self, image_path: str) -> str:
         """Read and base64 encode an image file."""
@@ -208,24 +222,38 @@ Return ONLY the JSON object, no other text or markdown formatting."""
         self,
         response_text: str,
         original_key: Optional[str],
-        reasoning_summary: Optional[str] = None
+        reasoning_summary: Optional[str] = None,
+        debug_info: Optional[Dict[str, Any]] = None
     ) -> AISuggestion:
         """Parse the AI response into structured data."""
+        debug_info = debug_info or {}
+        parse_error = None
+
         # Clean up response (remove markdown code blocks if present)
-        text = response_text.strip()
+        text = response_text.strip() if response_text else ""
         if text.startswith("```"):
             lines = text.split("\n")
             text = "\n".join(lines[1:-1])
 
         try:
             data = json.loads(text)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
+            parse_error = f"JSON decode error: {str(e)}"
             # Try to extract JSON from the response
             json_match = re.search(r'\{.*\}', text, re.DOTALL)
             if json_match:
-                data = json.loads(json_match.group())
+                try:
+                    data = json.loads(json_match.group())
+                    parse_error = None  # Successfully extracted JSON
+                except json.JSONDecodeError as e2:
+                    parse_error = f"JSON decode error after regex: {str(e2)}"
+                    data = None
             else:
-                # Return a fallback response
+                parse_error = f"No JSON found in response. Original error: {str(e)}"
+                data = None
+
+            if data is None:
+                # Return a fallback response with debug info
                 return AISuggestion(
                     recommended_transposition=0,
                     transposition_reasoning="Could not parse AI response",
@@ -233,7 +261,12 @@ Return ONLY the JSON object, no other text or markdown formatting."""
                     musical_notes="Error processing AI suggestions. Please try again.",
                     original_key=original_key,
                     suggested_key=original_key,
-                    reasoning_summary=reasoning_summary
+                    reasoning_summary=reasoning_summary,
+                    debug_raw_response=debug_info.get("raw_response"),
+                    debug_parse_error=parse_error,
+                    debug_model_used=debug_info.get("model_used"),
+                    debug_input_notes=debug_info.get("input_notes"),
+                    debug_available_notes=debug_info.get("available_notes")
                 )
 
         # Parse note mappings
@@ -255,7 +288,12 @@ Return ONLY the JSON object, no other text or markdown formatting."""
             original_key=original_key,
             suggested_key=data.get("suggested_key"),
             ocr_corrections=data.get("ocr_corrections"),
-            reasoning_summary=reasoning_summary
+            reasoning_summary=reasoning_summary,
+            debug_raw_response=debug_info.get("raw_response"),
+            debug_parse_error=parse_error,
+            debug_model_used=debug_info.get("model_used"),
+            debug_input_notes=debug_info.get("input_notes"),
+            debug_available_notes=debug_info.get("available_notes")
         )
 
 

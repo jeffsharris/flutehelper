@@ -149,6 +149,52 @@
         <p class="empty-text">No notes could be extracted from the image. Try a clearer image.</p>
     </div>
     {% endif %}
+
+    <!-- Debug Information (collapsible) -->
+    {% if debug_raw_response or debug_parse_error %}
+    <details class="debug-section">
+        <summary class="debug-header">
+            <span>Debug Information</span>
+            <span class="expand-icon">&#9660;</span>
+        </summary>
+        <div class="debug-content">
+            {% if debug_parse_error %}
+            <div class="debug-item error">
+                <strong>Parse Error:</strong>
+                <pre>{{ debug_parse_error }}</pre>
+            </div>
+            {% endif %}
+
+            {% if debug_model_used %}
+            <div class="debug-item">
+                <strong>Model Used:</strong>
+                <code>{{ debug_model_used }}</code>
+            </div>
+            {% endif %}
+
+            {% if debug_input_notes %}
+            <div class="debug-item">
+                <strong>OCR Input Notes ({{ debug_input_notes|length }}):</strong>
+                <pre>{{ debug_input_notes | join(', ') }}</pre>
+            </div>
+            {% endif %}
+
+            {% if debug_available_notes %}
+            <div class="debug-item">
+                <strong>Available Flute Notes ({{ debug_available_notes|length }}):</strong>
+                <pre>{{ debug_available_notes | join(', ') }}</pre>
+            </div>
+            {% endif %}
+
+            {% if debug_raw_response %}
+            <div class="debug-item">
+                <strong>Raw AI Response:</strong>
+                <pre class="raw-response">{{ debug_raw_response }}</pre>
+            </div>
+            {% endif %}
+        </div>
+    </details>
+    {% endif %}
 </div>
 
 <script>

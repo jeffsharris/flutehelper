@@ -230,7 +230,13 @@ async def upload_sheet_music(
                 "playable_count": playable_count,
                 "profile_id": profile_id,
                 "profile_name": profile.get("name", "Unknown"),
-                "profiles": profiles
+                "profiles": profiles,
+                # Debug info
+                "debug_raw_response": ai_suggestion.debug_raw_response,
+                "debug_parse_error": ai_suggestion.debug_parse_error,
+                "debug_model_used": ai_suggestion.debug_model_used,
+                "debug_input_notes": ai_suggestion.debug_input_notes,
+                "debug_available_notes": ai_suggestion.debug_available_notes
             })
 
         # Standard Import Mode
