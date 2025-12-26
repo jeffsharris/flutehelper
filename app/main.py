@@ -361,6 +361,14 @@ async def upload_sheet_music_streaming(
                 "status",
                 _status_payload("Extracting notes from image...", "extracting_notes", start_time),
             )
+            yield _sse_event(
+                "debug",
+                _debug_payload(
+                    "OMR request",
+                    _build_omr_request_payload(tmp_path, file.filename),
+                    start_time,
+                ),
+            )
             try:
                 extracted_music = await omr_service.process_image(tmp_path)
             except OMRServiceError as exc:
@@ -373,9 +381,18 @@ async def upload_sheet_music_streaming(
             profile = profiles[profile_id]
             profile_fingerings = profile.get("fingerings", {})
 
+            analysis_message = _format_omr_status(extracted_music)
             yield _sse_event(
                 "status",
-                _status_payload("Notes extracted", "notes_extracted", start_time),
+                _status_payload(analysis_message, "sheet_music_analysis_complete", start_time),
+            )
+            yield _sse_event(
+                "debug",
+                _debug_payload(
+                    "OMR result",
+                    _build_omr_debug_payload(extracted_music),
+                    start_time,
+                ),
             )
             yield _sse_event(
                 "status",
@@ -391,6 +408,11 @@ async def upload_sheet_music_streaming(
                         "status",
                         _coerce_status_payload(event.data, start_time, "ai_status"),
                     )
+                elif event.type == "debug":
+                    yield _sse_event(
+                        "debug",
+                        _coerce_debug_payload(event.data, start_time, "ai_debug"),
+                    )
                 elif event.type == "reasoning_delta":
                     yield _sse_event("reasoning", event.data)
                 elif event.type == "complete":
@@ -401,6 +423,19 @@ async def upload_sheet_music_streaming(
                     final_data = _build_streaming_result(
                         event.final_response, extracted_music,
                         profile_fingerings, profile, profile_id, file.filename
+                    )
+                    mapping_summary = _build_mapping_debug_payload(final_data)
+                    yield _sse_event(
+                        "status",
+                        _status_payload(
+                            _format_mapping_status(mapping_summary),
+                            "mapping_complete",
+                            start_time,
+                        ),
+                    )
+                    yield _sse_event(
+                        "debug",
+                        _debug_payload("Mapping summary", mapping_summary, start_time),
                     )
                     yield f"data: {json.dumps({'type': 'complete', 'data': final_data})}\n\n"
                 elif event.type == "error":
@@ -463,6 +498,88 @@ def _coerce_status_payload(data: Any, start_time: float, default_stage: str) -> 
     payload.setdefault("stage", default_stage)
     payload["elapsed_ms"] = int((time.monotonic() - start_time) * 1000)
     return payload
+
+
+def _debug_payload(label: str, payload: Any, start_time: Optional[float]) -> dict:
+    """Build a debug payload with elapsed time."""
+    elapsed_ms = 0
+    if start_time is not None:
+        elapsed_ms = int((time.monotonic() - start_time) * 1000)
+    return {"label": label, "payload": payload, "elapsed_ms": elapsed_ms}
+
+
+def _coerce_debug_payload(data: Any, start_time: float, default_label: str) -> dict:
+    """Normalize debug payloads and attach elapsed time."""
+    if isinstance(data, dict):
+        payload = dict(data)
+    else:
+        payload = {"label": default_label, "payload": data}
+
+    payload.setdefault("label", default_label)
+    payload.setdefault("payload", data)
+    payload["elapsed_ms"] = int((time.monotonic() - start_time) * 1000)
+    return payload
+
+
+def _format_omr_status(extracted_music) -> str:
+    """Format a user-facing OMR completion message."""
+    parts = [f"{len(extracted_music.notes)} notes extracted"]
+    if extracted_music.title:
+        parts.append(f"Title: {extracted_music.title}")
+    if extracted_music.key_signature:
+        parts.append(f"Key: {extracted_music.key_signature}")
+    return "Sheet music analysis complete: " + ", ".join(parts)
+
+
+def _build_omr_debug_payload(extracted_music) -> dict:
+    """Build debug payload for OMR results."""
+    return {
+        "title": extracted_music.title,
+        "key_signature": extracted_music.key_signature,
+        "confidence": extracted_music.confidence,
+        "notes_count": len(extracted_music.notes),
+        "notes": [note.display_name for note in extracted_music.notes],
+    }
+
+
+def _build_omr_request_payload(tmp_path: str, filename: str) -> dict:
+    """Build debug payload for the OMR request."""
+    file_size = None
+    try:
+        file_size = Path(tmp_path).stat().st_size
+    except OSError:
+        file_size = None
+    return {
+        "filename": filename,
+        "file_bytes": file_size,
+        "timeout_seconds": settings.OPENAI_TIMEOUT_SECONDS,
+    }
+
+
+def _build_mapping_debug_payload(result_data: dict) -> dict:
+    """Build debug payload for mapping results."""
+    results = result_data.get("results", [])
+    playable_count = result_data.get("playable_count", 0)
+    note_count = result_data.get("note_count", len(results))
+    substitutions = sum(1 for r in results if r.get("substitution_reason"))
+    unmapped = sum(1 for r in results if not r.get("fingering"))
+    return {
+        "note_count": note_count,
+        "playable_count": playable_count,
+        "unplayable_count": note_count - playable_count,
+        "substitution_count": substitutions,
+        "unmapped_count": unmapped,
+    }
+
+
+def _format_mapping_status(summary: dict) -> str:
+    """Format a user-facing mapping completion message."""
+    return (
+        "Mapping complete: "
+        f"{summary.get('playable_count', 0)}/{summary.get('note_count', 0)} playable, "
+        f"{summary.get('substitution_count', 0)} substitutions, "
+        f"{summary.get('unmapped_count', 0)} unmapped"
+    )
 
 
 def _build_streaming_result(ai_suggestion, extracted_music, profile_fingerings,

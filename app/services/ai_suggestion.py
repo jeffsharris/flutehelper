@@ -62,6 +62,7 @@ class StreamEvent:
             - 'status': Step-level progress update
             - 'reasoning_delta': Chunk of reasoning summary text
             - 'text_delta': Chunk of output text (JSON response)
+            - 'debug': Debug payload for logging
             - 'complete': Final parsed response ready
             - 'error': Error occurred during processing
         data: Event payload (text chunk, status dict, or error message)
@@ -151,45 +152,54 @@ MAX_OUTPUT_TOKENS = 4096
 
 # JSON schema for structured output
 AI_SUGGESTION_SCHEMA = {
-    "name": "ai_suggestion",
-    "schema": {
-        "type": "object",
-        "properties": {
-            "recommended_transposition": {"type": "integer"},
-            "transposition_reasoning": {"type": "string"},
-            "suggested_key": {"type": ["string", "null"]},
-            "ocr_corrections": {"type": ["string", "null"]},
-            "note_mappings": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "original": {"type": "string"},
-                        "transposed": {"type": "string"},
-                        "suggested": {"type": "string"},
-                        "playable": {"type": "boolean"},
-                        "substitution_reason": {"type": ["string", "null"]},
-                    },
-                    "required": ["original", "transposed", "suggested", "playable"],
-                    "additionalProperties": False,
+    "type": "object",
+    "properties": {
+        "recommended_transposition": {"type": "integer"},
+        "transposition_reasoning": {"type": "string"},
+        "suggested_key": {"type": ["string", "null"]},
+        "ocr_corrections": {"type": ["string", "null"]},
+        "note_mappings": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "original": {"type": "string"},
+                    "transposed": {"type": "string"},
+                    "suggested": {"type": "string"},
+                    "playable": {"type": "boolean"},
+                    "substitution_reason": {"type": ["string", "null"]},
                 },
+                "required": [
+                    "original",
+                    "transposed",
+                    "suggested",
+                    "playable",
+                    "substitution_reason",
+                ],
+                "additionalProperties": False,
             },
-            "musical_notes": {"type": "string"},
         },
-        "required": [
-            "recommended_transposition",
-            "transposition_reasoning",
-            "suggested_key",
-            "ocr_corrections",
-            "note_mappings",
-            "musical_notes",
-        ],
-        "additionalProperties": False,
+        "musical_notes": {"type": "string"},
     },
-    "strict": True,
+    "required": [
+        "recommended_transposition",
+        "transposition_reasoning",
+        "suggested_key",
+        "ocr_corrections",
+        "note_mappings",
+        "musical_notes",
+    ],
+    "additionalProperties": False,
 }
 
-TEXT_FORMAT = {"format": {"type": "json_schema", "json_schema": AI_SUGGESTION_SCHEMA}}
+TEXT_FORMAT = {
+    "format": {
+        "type": "json_schema",
+        "name": "ai_suggestion",
+        "schema": AI_SUGGESTION_SCHEMA,
+        "strict": True,
+    }
+}
 
 
 # ============================================================
@@ -277,7 +287,7 @@ class AISuggestionService:
         reasoning_summary = self._extract_reasoning_summary(response)
 
         # Get text response (may be empty if model only produced reasoning)
-        response_text = response.output_text or ""
+        response_text = self._get_output_text(response) or ""
 
         # Build debug info
         debug_info["raw_response"] = response_text
@@ -308,6 +318,7 @@ class AISuggestionService:
             - type='status': Step-level progress update
             - type='reasoning_delta': Partial reasoning text
             - type='text_delta': Partial output text (usually not displayed)
+            - type='debug': Debug payload for logging
             - type='complete': Final parsed AISuggestion
             - type='error': Error message if something fails
         """
@@ -341,9 +352,18 @@ class AISuggestionService:
             )
             if status:
                 yield status
+            yield StreamEvent(
+                type="debug",
+                data={"label": "AI request payload", "payload": request_payload},
+            )
 
             status = self._build_status_event(
                 "request_sent", "Request sent to model", status_emitted
+            )
+            if status:
+                yield status
+            status = self._build_status_event(
+                "awaiting_response", "Awaiting model response", status_emitted
             )
             if status:
                 yield status
@@ -387,8 +407,7 @@ class AISuggestionService:
                         text_parts.append(event.delta)
                         yield StreamEvent(type="text_delta", data=event.delta)
                     elif event.type in ("response.failed", "response.incomplete", "response.error"):
-                        error_message = "AI response was interrupted. Please try again."
-                        yield StreamEvent(type="error", data=error_message)
+                        yield StreamEvent(type="error", data=self._format_stream_error(event))
                         return
 
                 # Get final response for any additional data
@@ -399,7 +418,19 @@ class AISuggestionService:
                 final_response
             )
             full_text = "".join(text_parts)
+            if not full_text:
+                full_text = self._get_output_text(final_response) or ""
             debug_info["raw_response"] = full_text
+
+            yield StreamEvent(
+                type="debug",
+                data={"label": "AI response text", "payload": full_text},
+            )
+            if full_reasoning:
+                yield StreamEvent(
+                    type="debug",
+                    data={"label": "AI reasoning summary", "payload": full_reasoning},
+                )
 
             status = self._build_status_event(
                 "parsing_response", "Parsing AI response", status_emitted
@@ -498,6 +529,37 @@ class AISuggestionService:
                     return "\n".join(texts)
         return None
 
+    def _get_output_text(self, response) -> str:
+        """Safely extract aggregated output text from SDK responses."""
+        if response is None:
+            return ""
+        output_text = getattr(response, "output_text", None)
+        if callable(output_text):
+            try:
+                return output_text()
+            except TypeError:
+                return ""
+        if isinstance(output_text, str):
+            return output_text
+        return output_text or ""
+
+    def _format_stream_error(self, event) -> str:
+        """Format a user-facing error message from streaming events."""
+        response = getattr(event, "response", None)
+        if response is not None:
+            error = getattr(response, "error", None)
+            if error:
+                message = getattr(error, "message", None) or str(error)
+                code = getattr(error, "code", None)
+                if code:
+                    return f"AI response failed: {message} (code={code})"
+                return f"AI response failed: {message}"
+            incomplete = getattr(response, "incomplete_details", None)
+            if incomplete:
+                reason = getattr(incomplete, "reason", None) or str(incomplete)
+                return f"AI response incomplete: {reason}."
+        return "AI response was interrupted. Please try again."
+
     def _build_status_event(
         self, stage: str, message: str, status_emitted: set[str]
     ) -> Optional[StreamEvent]:
@@ -519,8 +581,43 @@ class AISuggestionService:
         if hasattr(openai, "APIConnectionError") and isinstance(exc, openai.APIConnectionError):
             return "Could not connect to the AI service. Please check your connection and try again."
         if hasattr(openai, "APIError") and isinstance(exc, openai.APIError):
-            return "AI service returned an error. Please try again."
+            return self._format_api_error_details("AI service returned an error", exc)
         return f"AI request failed: {exc}"
+
+    def _format_api_error_details(self, prefix: str, exc: Exception) -> str:
+        """Format API errors with as much context as available."""
+        details = []
+        status = getattr(exc, "status_code", None)
+        request_id = getattr(exc, "request_id", None)
+        body = getattr(exc, "body", None)
+        message = getattr(exc, "message", None)
+
+        if status:
+            details.append(f"status={status}")
+        if request_id:
+            details.append(f"request_id={request_id}")
+
+        error_payload = None
+        if isinstance(body, dict):
+            error_payload = body.get("error") or body
+        if isinstance(error_payload, dict):
+            error_message = error_payload.get("message") or message
+            error_type = error_payload.get("type")
+            error_code = error_payload.get("code")
+            error_param = error_payload.get("param")
+            if error_type:
+                details.append(f"type={error_type}")
+            if error_code:
+                details.append(f"code={error_code}")
+            if error_param:
+                details.append(f"param={error_param}")
+            if error_message:
+                return f"{prefix}: {error_message}" + (f" ({', '.join(details)})" if details else "")
+
+        if message:
+            return f"{prefix}: {message}" + (f" ({', '.join(details)})" if details else "")
+
+        return f"{prefix}. Please try again." + (f" ({', '.join(details)})" if details else "")
 
     def _build_prompt(
         self,
@@ -569,7 +666,7 @@ Return ONLY a JSON object with this exact structure:
   "suggested_key": "The new key after transposition (e.g., 'E minor')",
   "ocr_corrections": "Description of any OCR errors you noticed and corrected, or null if none",
   "note_mappings": [
-    {{"original": "C4", "transposed": "C4", "suggested": "C4", "playable": true}},
+    {{"original": "C4", "transposed": "C4", "suggested": "C4", "playable": true, "substitution_reason": null}},
     {{"original": "Bb4", "transposed": "Bb4", "suggested": "B4", "playable": true, "substitution_reason": "Bb4 not available, using B4 as nearest option"}}
   ],
   "musical_notes": "Overall notes about this arrangement and any performance suggestions..."

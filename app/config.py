@@ -31,7 +31,7 @@ class Settings:
 
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     OPENAI_MODEL: str = "gpt-5.2"  # Vision-capable model with reasoning
-    OPENAI_TIMEOUT_SECONDS: int = int(os.getenv("OPENAI_TIMEOUT_SECONDS", "30"))
+    OPENAI_TIMEOUT_SECONDS: int = int(os.getenv("OPENAI_TIMEOUT_SECONDS", "600"))
 
 
 # Singleton instance - import this in other modules

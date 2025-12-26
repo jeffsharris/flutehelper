@@ -1180,13 +1180,6 @@ a:hover {
     color: var(--success);
 }
 
-.progress-note {
-    margin-top: 16px;
-    font-size: 0.85rem;
-    color: var(--text-muted);
-    text-align: center;
-}
-
 /* ===== Responsive ===== */
 @media (max-width: 600px) {
     .container {
@@ -1530,6 +1523,19 @@ a:hover {
 
 .debug-item .raw-response {
     max-height: 400px;
+}
+
+.debug-log {
+    background: #2d2d2d;
+    color: #f8f8f2;
+    padding: 12px;
+    border-radius: var(--radius-sm);
+    font-size: 0.8rem;
+    max-height: 260px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin: 0;
 }
 
 /* ===== Streaming Panel ===== */

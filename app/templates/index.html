@@ -124,22 +124,21 @@
                             </div>
                             <div class="stage-text">Analyzing sheet music with AI...</div>
                         </div>
-                        <div class="progress-stage" id="stage-3">
-                            <div class="stage-icon">
-                                <div class="spinner-small"></div>
-                                <div class="stage-dot"></div>
-                            </div>
-                            <div class="stage-text">Mapping notes to fingerings...</div>
-                        </div>
-                        <div class="progress-stage ai-stage" id="stage-4" style="display: none;">
+                        <div class="progress-stage ai-stage" id="stage-3" style="display: none;">
                             <div class="stage-icon">
                                 <div class="spinner-small"></div>
                                 <div class="stage-dot"></div>
                             </div>
                             <div class="stage-text">AI suggesting best arrangement...</div>
                         </div>
+                        <div class="progress-stage" id="stage-4">
+                            <div class="stage-icon">
+                                <div class="spinner-small"></div>
+                                <div class="stage-dot"></div>
+                            </div>
+                            <div class="stage-text">Mapping notes to fingerings...</div>
+                        </div>
                     </div>
-                    <p class="progress-note">This may take <span id="time-estimate">10-20</span> seconds</p>
                 </div>
             </form>
         </div>
@@ -163,6 +162,16 @@
                 <div class="streaming-text" id="streaming-text" data-placeholder="Reasoning will appear once the model starts."></div>
             </div>
         </div>
+
+        <details class="debug-section" id="streaming-debug" style="display: none;">
+            <summary class="debug-header">
+                <span>Debug Log</span>
+                <span class="expand-icon">&#9660;</span>
+            </summary>
+            <div class="debug-content">
+                <pre class="debug-log" id="debug-log"></pre>
+            </div>
+        </details>
 
         <!-- Results will be loaded here -->
         <div id="results"></div>
@@ -191,12 +200,13 @@
         // Import mode selection
         const importModeInput = document.getElementById('import-mode-input');
         const importModeRadios = document.querySelectorAll('input[name="import_mode_select"]');
-        const aiStage = document.getElementById('stage-4');
-        const timeEstimate = document.getElementById('time-estimate');
+        const aiStage = document.getElementById('stage-3');
         const streamingPanel = document.getElementById('streaming-panel');
         const streamingText = document.getElementById('streaming-text');
         const streamingStatus = document.getElementById('streaming-status');
         const streamingLog = document.getElementById('streaming-log');
+        const streamingDebug = document.getElementById('streaming-debug');
+        const debugLog = document.getElementById('debug-log');
 
         importModeRadios.forEach(radio => {
             radio.addEventListener('change', (e) => {
@@ -204,12 +214,16 @@
                 // Show/hide AI stage and update time estimate
                 if (e.target.value === 'ai') {
                     aiStage.style.display = 'flex';
-                    timeEstimate.textContent = '20-40';
+                    if (streamingDebug) {
+                        streamingDebug.style.display = 'block';
+                    }
                 } else {
                     aiStage.style.display = 'none';
-                    timeEstimate.textContent = '10-20';
                     if (streamingPanel) {
                         streamingPanel.style.display = 'none';
+                    }
+                    if (streamingDebug) {
+                        streamingDebug.style.display = 'none';
                     }
                     if (streamingText) {
                         streamingText.textContent = '';
@@ -221,6 +235,9 @@
                     }
                     if (streamingLog) {
                         streamingLog.innerHTML = '';
+                    }
+                    if (debugLog) {
+                        debugLog.textContent = '';
                     }
                 }
             });
@@ -270,11 +287,97 @@
 
         // Progress stages animation
         let stageInterval = null;
+        let currentProgressStage = 1;
+
+        function getVisibleStages() {
+            return Array.from(document.querySelectorAll('.progress-stage'))
+                .filter(stage => stage.style.display !== 'none');
+        }
+
+        function resetProgressStages() {
+            document.querySelectorAll('.progress-stage').forEach(stage => {
+                stage.classList.remove('active', 'complete');
+            });
+            const stages = getVisibleStages();
+            if (stages.length) {
+                stages[0].classList.add('active');
+            }
+            currentProgressStage = 1;
+        }
+
+        function markStageComplete(stageNumber) {
+            const stage = document.getElementById(`stage-${stageNumber}`);
+            if (!stage || stage.style.display === 'none') return;
+            stage.classList.remove('active');
+            stage.classList.add('complete');
+        }
+
+        function markStageActive(stageNumber) {
+            const stage = document.getElementById(`stage-${stageNumber}`);
+            if (!stage || stage.style.display === 'none') return;
+            stage.classList.add('active');
+            stage.classList.remove('complete');
+        }
+
+        function advanceProgressStage(target) {
+            if (!target || target <= currentProgressStage) return;
+            for (let i = currentProgressStage; i < target; i += 1) {
+                markStageComplete(i);
+            }
+            markStageActive(target);
+            currentProgressStage = target;
+        }
+
+        function completeAllStages() {
+            document.querySelectorAll('.progress-stage').forEach(stage => {
+                if (stage.style.display !== 'none') {
+                    stage.classList.remove('active');
+                    stage.classList.add('complete');
+                }
+            });
+            currentProgressStage = 4;
+        }
+
+        function startStandardProgressAnimation() {
+            const stages = getVisibleStages();
+            if (!stages.length) return;
+
+            let index = 0;
+            stageInterval = setInterval(() => {
+                if (index < stages.length - 1) {
+                    stages[index].classList.remove('active');
+                    stages[index].classList.add('complete');
+                    index += 1;
+                    stages[index].classList.add('active');
+                }
+            }, 3000);
+        }
+
+        function updateProgressStageFromStatus(stage) {
+            const stageMap = {
+                client_start: 1,
+                upload_received: 1,
+                extracting_notes: 2,
+                sheet_music_analysis_complete: 2,
+                ai_start: 3,
+                request_prepared: 3,
+                request_sent: 3,
+                awaiting_response: 3,
+                model_processing: 3,
+                reasoning_streaming: 3,
+                response_streaming: 3,
+                parsing_response: 3,
+                model_completed: 3,
+                mapping_notes: 4,
+                mapping_complete: 4,
+                complete: 4
+            };
+            advanceProgressStage(stageMap[stage]);
+        }
 
         document.body.addEventListener('htmx:beforeRequest', function(e) {
             if (e.detail.elt.id === 'upload-form') {
                 const isAiMode = importModeInput.value === 'ai';
-                const maxStages = isAiMode ? 4 : 3;
 
                 if (!isAiMode && streamingPanel) {
                     streamingPanel.style.display = 'none';
@@ -289,48 +392,33 @@
                     if (streamingLog) {
                         streamingLog.innerHTML = '';
                     }
+                    if (streamingDebug) {
+                        streamingDebug.style.display = 'none';
+                    }
+                    if (debugLog) {
+                        debugLog.textContent = '';
+                    }
                 }
 
-                // Reset stages
-                document.querySelectorAll('.progress-stage').forEach((s, i) => {
-                    s.classList.remove('active', 'complete');
-                    if (i === 0) s.classList.add('active');
-                });
+                if (stageInterval) {
+                    clearInterval(stageInterval);
+                    stageInterval = null;
+                }
 
-                // Animate through stages
-                let currentStage = 1;
-                const stageTime = isAiMode ? 4000 : 3000; // More time per stage for AI mode
-                stageInterval = setInterval(() => {
-                    if (currentStage < maxStages) {
-                        // Mark current as complete
-                        const current = document.getElementById('stage-' + currentStage);
-                        current.classList.remove('active');
-                        current.classList.add('complete');
-
-                        // Activate next
-                        currentStage++;
-                        const next = document.getElementById('stage-' + currentStage);
-                        if (next) {
-                            next.classList.add('active');
-                        }
-                    }
-                }, stageTime);
+                resetProgressStages();
+                if (!isAiMode) {
+                    startStandardProgressAnimation();
+                }
             }
         });
 
         document.body.addEventListener('htmx:afterRequest', function(e) {
             if (e.detail.elt.id === 'upload-form') {
-                // Clear interval and mark all visible stages complete
                 if (stageInterval) {
                     clearInterval(stageInterval);
                     stageInterval = null;
                 }
-                document.querySelectorAll('.progress-stage').forEach(s => {
-                    if (s.style.display !== 'none') {
-                        s.classList.remove('active');
-                        s.classList.add('complete');
-                    }
-                });
+                completeAllStages();
             }
         });
 
@@ -362,9 +450,14 @@
             const resultsDiv = document.getElementById('results');
             const loadingDiv = document.getElementById('loading');
             const streamingLog = document.getElementById('streaming-log');
+            const streamingDebug = document.getElementById('streaming-debug');
+            const debugLog = document.getElementById('debug-log');
 
             // Show streaming panel and loading
             streamingPanel.style.display = 'block';
+            if (streamingDebug) {
+                streamingDebug.style.display = 'block';
+            }
             streamingText.textContent = '';
             streamingText.classList.remove('is-active', 'is-complete', 'is-error');
             streamingText.dataset.placeholder = 'Reasoning will appear once the model starts.';
@@ -373,17 +466,22 @@
             if (streamingLog) {
                 streamingLog.innerHTML = '';
             }
+            if (debugLog) {
+                debugLog.textContent = '';
+            }
             streamStart = performance.now();
             streamingStages = new Set();
             appendStreamingLog({ message: 'Preparing request...', stage: 'client_start' }, false);
+            appendDebugLog({ label: 'client_start', payload: 'Preparing request...' });
             loadingDiv.classList.add('htmx-request');
             resultsDiv.innerHTML = '';
 
-            // Reset and animate progress stages
-            document.querySelectorAll('.progress-stage').forEach((s, i) => {
-                s.classList.remove('active', 'complete');
-                if (i === 0) s.classList.add('active');
-            });
+            if (stageInterval) {
+                clearInterval(stageInterval);
+                stageInterval = null;
+            }
+            resetProgressStages();
+            updateProgressStageFromStatus('client_start');
 
             try {
                 const response = await fetch('/upload-stream', {
@@ -428,6 +526,7 @@
                 streamingText.dataset.placeholder = 'Reasoning stopped due to an error.';
                 streamingStatus.innerHTML = `<span style="color: var(--error);">&#10007; Error</span>`;
                 appendStreamingLog({ message: `Network error: ${err.message}`, stage: 'network_error' }, true);
+                appendDebugLog({ label: 'error:network_error', payload: err.message });
                 resultsDiv.innerHTML = `<div class="card"><div class="empty-state"><div class="empty-icon">&#9888;&#65039;</div><h3 class="empty-title">Error: ${escapeHtml(err.message)}</h3></div></div>`;
             }
         }
@@ -440,6 +539,12 @@
                     const elapsed = resolveElapsed(statusData.elapsed_ms);
                     streamingStatus.innerHTML = `<div class="spinner-small"></div><span>${escapeHtml(statusData.message)}${elapsed ? ` (${elapsed})` : ''}</span>`;
                     appendStreamingLog(statusData, false);
+                    appendDebugLog({
+                        label: `status:${statusData.stage || 'status'}`,
+                        payload: statusData.message,
+                        elapsed_ms: statusData.elapsed_ms
+                    });
+                    updateProgressStageFromStatus(statusData.stage);
                     if (statusData.stage === 'reasoning_streaming') {
                         streamingText.classList.add('is-active');
                         streamingText.dataset.placeholder = 'Receiving reasoning summary...';
@@ -462,12 +567,11 @@
                 case 'complete':
                     // Hide loading, show results
                     loadingDiv.classList.remove('htmx-request');
-                    document.querySelectorAll('.progress-stage').forEach(s => {
-                        s.classList.remove('active');
-                        s.classList.add('complete');
-                    });
+                    completeAllStages();
                     streamingStatus.innerHTML = '<span style="color: var(--success);">&#10003; Complete</span>';
                     appendStreamingLog({ message: 'Complete', stage: 'complete' }, false);
+                    appendDebugLog({ label: 'complete', payload: 'Complete' });
+                    updateProgressStageFromStatus('complete');
                     streamingText.classList.remove('is-active');
                     streamingText.classList.add('is-complete');
                     if (!streamingText.textContent.trim()) {
@@ -484,12 +588,22 @@
                     const errorElapsed = resolveElapsed(errorData.elapsed_ms);
                     streamingStatus.innerHTML = `<span style="color: var(--error);">&#10007; Error${errorElapsed ? ` (${errorElapsed})` : ''}</span>`;
                     appendStreamingLog(errorData, true);
+                    appendDebugLog({
+                        label: `error:${errorData.stage || 'error'}`,
+                        payload: errorData.message,
+                        elapsed_ms: errorData.elapsed_ms
+                    });
+                    updateProgressStageFromStatus(errorData.stage);
                     streamingText.classList.remove('is-active');
                     streamingText.classList.add('is-error');
                     if (!streamingText.textContent.trim()) {
                         streamingText.dataset.placeholder = 'Reasoning stopped due to an error.';
                     }
                     resultsDiv.innerHTML = `<div class="card"><div class="empty-state"><div class="empty-icon">&#9888;&#65039;</div><h3 class="empty-title">${escapeHtml(errorData.message)}</h3></div></div>`;
+                    break;
+
+                case 'debug':
+                    appendDebugLog(normalizeDebugData(event.data));
                     break;
             }
         }
@@ -554,6 +668,43 @@
             item.appendChild(messageSpan);
             streamingLog.appendChild(item);
             streamingLog.scrollTop = streamingLog.scrollHeight;
+        }
+
+        function normalizeDebugData(data) {
+            if (!data || typeof data !== 'object') {
+                return { label: 'debug', payload: data };
+            }
+            return {
+                label: data.label || 'debug',
+                payload: data.payload,
+                elapsed_ms: data.elapsed_ms
+            };
+        }
+
+        function appendDebugLog(entry) {
+            const debugLog = document.getElementById('debug-log');
+            if (!debugLog) return;
+
+            const elapsed = resolveElapsed(entry.elapsed_ms);
+            const label = entry.label || 'debug';
+            const header = `${elapsed ? `${elapsed} ` : ''}${label}`;
+
+            let payloadText = '';
+            if (entry.payload !== undefined) {
+                if (typeof entry.payload === 'string') {
+                    payloadText = entry.payload;
+                } else {
+                    try {
+                        payloadText = JSON.stringify(entry.payload, null, 2);
+                    } catch (err) {
+                        payloadText = String(entry.payload);
+                    }
+                }
+            }
+
+            const nextBlock = payloadText ? `${header}\n${payloadText}\n` : `${header}\n`;
+            debugLog.textContent += nextBlock + '\n';
+            debugLog.scrollTop = debugLog.scrollHeight;
         }
 
         function renderAiResults(data, container) {

@@ -58,6 +58,40 @@ Rules:
 
 Return ONLY the JSON object, no other text or markdown formatting."""
 
+MAX_OUTPUT_TOKENS = 4096
+
+OMR_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "title": {"type": ["string", "null"]},
+        "key_signature": {"type": ["string", "null"]},
+        "notes": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "enum": ["C", "D", "E", "F", "G", "A", "B"]},
+                    "octave": {"type": "integer"},
+                    "accidental": {"type": "string", "enum": ["natural", "sharp", "flat"]},
+                },
+                "required": ["name", "octave", "accidental"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["title", "key_signature", "notes"],
+    "additionalProperties": False,
+}
+
+TEXT_FORMAT = {
+    "format": {
+        "type": "json_schema",
+        "name": "omr_extraction",
+        "schema": OMR_SCHEMA,
+        "strict": True,
+    }
+}
+
 
 class OMRServiceError(RuntimeError):
     """Raised when the OMR service cannot complete a request."""
@@ -117,32 +151,34 @@ class AIVisionOMR:
 
         # Call the API
         try:
-            response = self.client.chat.completions.create(
+            response = self.client.responses.create(
                 model=self.model,
-                messages=[
+                input=[
                     {
                         "role": "user",
                         "content": [
                             {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:{media_type};base64,{image_data}"
-                                }
+                                "type": "input_image",
+                                "image_url": f"data:{media_type};base64,{image_data}",
                             },
                             {
-                                "type": "text",
-                                "text": OMR_PROMPT
-                            }
+                                "type": "input_text",
+                                "text": OMR_PROMPT,
+                            },
                         ],
                     }
                 ],
-                max_completion_tokens=4096,
+                max_output_tokens=MAX_OUTPUT_TOKENS,
+                text=TEXT_FORMAT,
             )
         except Exception as exc:
             raise OMRServiceError(self._format_error_message(exc)) from exc
 
-        response_text = response.choices[0].message.content
-        return self._parse_response(response_text)
+        response_text = self._get_output_text(response)
+        try:
+            return self._parse_response(response_text)
+        except Exception as exc:
+            raise OMRServiceError(f"AI vision response could not be parsed: {exc}") from exc
 
     def _parse_response(self, response_text: str) -> ExtractedMusic:
         """
@@ -206,6 +242,20 @@ class AIVisionOMR:
             confidence=0.85
         )
 
+    def _get_output_text(self, response) -> str:
+        """Safely extract aggregated output text from SDK responses."""
+        if response is None:
+            return ""
+        output_text = getattr(response, "output_text", None)
+        if callable(output_text):
+            try:
+                return output_text()
+            except TypeError:
+                return ""
+        if isinstance(output_text, str):
+            return output_text
+        return output_text or ""
+
     def _parse_single_note(self, note_data: dict) -> Optional[Note]:
         """
         Parse a single note from the AI response.
@@ -246,5 +296,40 @@ class AIVisionOMR:
         if hasattr(openai, "APIConnectionError") and isinstance(exc, openai.APIConnectionError):
             return "Could not connect to the AI vision service. Please check your connection and try again."
         if hasattr(openai, "APIError") and isinstance(exc, openai.APIError):
-            return "AI vision service returned an error. Please try again."
+            return self._format_api_error_details("AI vision service returned an error", exc)
         return f"AI vision request failed: {exc}"
+
+    def _format_api_error_details(self, prefix: str, exc: Exception) -> str:
+        """Format API errors with as much context as available."""
+        details = []
+        status = getattr(exc, "status_code", None)
+        request_id = getattr(exc, "request_id", None)
+        body = getattr(exc, "body", None)
+        message = getattr(exc, "message", None)
+
+        if status:
+            details.append(f"status={status}")
+        if request_id:
+            details.append(f"request_id={request_id}")
+
+        error_payload = None
+        if isinstance(body, dict):
+            error_payload = body.get("error") or body
+        if isinstance(error_payload, dict):
+            error_message = error_payload.get("message") or message
+            error_type = error_payload.get("type")
+            error_code = error_payload.get("code")
+            error_param = error_payload.get("param")
+            if error_type:
+                details.append(f"type={error_type}")
+            if error_code:
+                details.append(f"code={error_code}")
+            if error_param:
+                details.append(f"param={error_param}")
+            if error_message:
+                return f"{prefix}: {error_message}" + (f" ({', '.join(details)})" if details else "")
+
+        if message:
+            return f"{prefix}: {message}" + (f" ({', '.join(details)})" if details else "")
+
+        return f"{prefix}. Please try again." + (f" ({', '.join(details)})" if details else "")
