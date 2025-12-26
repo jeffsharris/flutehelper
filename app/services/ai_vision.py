@@ -162,6 +162,9 @@ class AIVisionOMR:
         Raises:
             ValueError: If no valid JSON can be extracted
         """
+        if not response_text:
+            raise ValueError("AI vision response was empty")
+
         text = response_text.strip()
 
         # Remove markdown code blocks if present
@@ -181,8 +184,14 @@ class AIVisionOMR:
                 raise ValueError(f"Could not parse AI response as JSON: {e}")
 
         # Parse notes
+        notes_raw = data.get("notes")
+        if notes_raw is None:
+            raise ValueError("AI vision response missing 'notes' list")
+        if not isinstance(notes_raw, list):
+            raise ValueError("AI vision response 'notes' must be a list")
+
         notes = []
-        for n in data.get("notes", []):
+        for n in notes_raw:
             try:
                 note = self._parse_single_note(n)
                 if note:

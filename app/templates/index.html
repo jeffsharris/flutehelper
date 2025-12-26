@@ -193,6 +193,10 @@
         const importModeRadios = document.querySelectorAll('input[name="import_mode_select"]');
         const aiStage = document.getElementById('stage-4');
         const timeEstimate = document.getElementById('time-estimate');
+        const streamingPanel = document.getElementById('streaming-panel');
+        const streamingText = document.getElementById('streaming-text');
+        const streamingStatus = document.getElementById('streaming-status');
+        const streamingLog = document.getElementById('streaming-log');
 
         importModeRadios.forEach(radio => {
             radio.addEventListener('change', (e) => {
@@ -204,6 +208,20 @@
                 } else {
                     aiStage.style.display = 'none';
                     timeEstimate.textContent = '10-20';
+                    if (streamingPanel) {
+                        streamingPanel.style.display = 'none';
+                    }
+                    if (streamingText) {
+                        streamingText.textContent = '';
+                        streamingText.classList.remove('is-active', 'is-complete', 'is-error');
+                        streamingText.dataset.placeholder = 'Reasoning will appear once the model starts.';
+                    }
+                    if (streamingStatus) {
+                        streamingStatus.innerHTML = '<span>Waiting to start</span>';
+                    }
+                    if (streamingLog) {
+                        streamingLog.innerHTML = '';
+                    }
                 }
             });
         });
@@ -257,6 +275,21 @@
             if (e.detail.elt.id === 'upload-form') {
                 const isAiMode = importModeInput.value === 'ai';
                 const maxStages = isAiMode ? 4 : 3;
+
+                if (!isAiMode && streamingPanel) {
+                    streamingPanel.style.display = 'none';
+                    if (streamingText) {
+                        streamingText.textContent = '';
+                        streamingText.classList.remove('is-active', 'is-complete', 'is-error');
+                        streamingText.dataset.placeholder = 'Reasoning will appear once the model starts.';
+                    }
+                    if (streamingStatus) {
+                        streamingStatus.innerHTML = '<span>Waiting to start</span>';
+                    }
+                    if (streamingLog) {
+                        streamingLog.innerHTML = '';
+                    }
+                }
 
                 // Reset stages
                 document.querySelectorAll('.progress-stage').forEach((s, i) => {
