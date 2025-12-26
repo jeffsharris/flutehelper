@@ -28,6 +28,7 @@ Routes:
     /api/settings/*     - Application settings
 """
 
+import asyncio
 import json
 import shutil
 import tempfile
@@ -312,6 +313,7 @@ def _handle_standard_import(request, extracted_music, profile_fingerings,
 
 @app.post("/upload-stream")
 async def upload_sheet_music_streaming(
+    request: Request,
     file: UploadFile = File(...),
     profile_id: str = Form(...)
 ):
@@ -352,11 +354,25 @@ async def upload_sheet_music_streaming(
     async def generate():
         """Generate SSE events as AI processes the request."""
         start_time = time.monotonic()
+
+        async def await_or_disconnect(task: asyncio.Task):
+            while True:
+                done, _ = await asyncio.wait({task}, timeout=0.25)
+                if task in done:
+                    return task.result()
+                if await request.is_disconnected():
+                    task.cancel()
+                    return None
+
         try:
+            if await request.is_disconnected():
+                return
             yield _sse_event(
                 "status",
                 _status_payload("Upload received", "upload_received", start_time),
             )
+            if await request.is_disconnected():
+                return
             yield _sse_event(
                 "status",
                 _status_payload("Extracting notes from image...", "extracting_notes", start_time),
@@ -369,13 +385,22 @@ async def upload_sheet_music_streaming(
                     start_time,
                 ),
             )
+            omr_task = asyncio.create_task(omr_service.process_image(tmp_path))
             try:
-                extracted_music = await omr_service.process_image(tmp_path)
+                extracted_music = await await_or_disconnect(omr_task)
             except OMRServiceError as exc:
                 yield _sse_event(
                     "error",
                     _status_payload(str(exc), "omr_error", start_time),
                 )
+                return
+            except Exception as exc:
+                yield _sse_event(
+                    "error",
+                    _status_payload(f"OMR failed: {exc}", "omr_error", start_time),
+                )
+                return
+            if extracted_music is None:
                 return
 
             profile = profiles[profile_id]
@@ -403,6 +428,8 @@ async def upload_sheet_music_streaming(
             for event in ai_suggestion_service.get_suggestions_streaming(
                 extracted_music, profile_fingerings, image_path=tmp_path
             ):
+                if await request.is_disconnected():
+                    return
                 if event.type == "status":
                     yield _sse_event(
                         "status",

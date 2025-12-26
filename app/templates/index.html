@@ -476,6 +476,7 @@
         let streamStart = null;
         let streamingStages = new Set();
         let reasoningStarted = false;
+        let currentStreamController = null;
 
         uploadForm.addEventListener('submit', async function(e) {
             const isAiMode = importModeInput.value === 'ai';
@@ -532,10 +533,16 @@
             resetProgressStages();
             updateProgressStageFromStatus('client_start');
 
+            if (currentStreamController) {
+                currentStreamController.abort();
+            }
+            currentStreamController = new AbortController();
+
             try {
                 const response = await fetch('/upload-stream', {
                     method: 'POST',
-                    body: formData
+                    body: formData,
+                    signal: currentStreamController.signal
                 });
 
                 if (!response.ok) {
@@ -589,6 +596,12 @@
                     throw new Error('No streaming updates received from the server.');
                 }
             } catch (err) {
+                if (err.name === 'AbortError') {
+                    loadingDiv.classList.remove('htmx-request');
+                    streamingStatus.innerHTML = '<span>Request canceled</span>';
+                    appendStreamingLog({ message: 'Request canceled', stage: 'client_canceled' }, true);
+                    return;
+                }
                 console.error('Streaming error:', err);
                 loadingDiv.classList.remove('htmx-request');
                 streamingText.classList.remove('is-active');
@@ -598,8 +611,17 @@
                 appendStreamingLog({ message: `Network error: ${err.message}`, stage: 'network_error' }, true);
                 appendDebugLog({ label: 'error:network_error', payload: err.message });
                 resultsDiv.innerHTML = `<div class="card"><div class="empty-state"><div class="empty-icon">&#9888;&#65039;</div><h3 class="empty-title">Error: ${escapeHtml(err.message)}</h3></div></div>`;
+            } finally {
+                currentStreamController = null;
             }
         }
+
+        window.addEventListener('pagehide', () => {
+            if (currentStreamController) {
+                currentStreamController.abort();
+                currentStreamController = null;
+            }
+        });
 
         function handleStreamEvent(event, streamingText, streamingStatus, resultsDiv, loadingDiv, streamingPanel) {
             switch (event.type) {
