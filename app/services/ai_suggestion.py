@@ -101,7 +101,8 @@ class AISuggestion:
     Attributes:
         recommended_transposition: Semitones to shift (+ = up, - = down)
         transposition_reasoning: AI's explanation for the transposition choice
-        note_mappings: List of NoteSuggestion for each note in the song
+        note_mapping_table: Unique note mapping table used for substitutions
+        note_sequence: Full note sequence after applying the mapping
         musical_notes: General arrangement advice and performance tips
         original_key: Original key signature from sheet music
         suggested_key: New key after transposition
@@ -118,7 +119,8 @@ class AISuggestion:
     """
     recommended_transposition: int
     transposition_reasoning: str
-    note_mappings: List[NoteSuggestion]
+    note_mapping_table: List[NoteSuggestion]
+    note_sequence: List[NoteSuggestion]
     musical_notes: str
     original_key: Optional[str] = None
     suggested_key: Optional[str] = None
@@ -149,6 +151,25 @@ REASONING_CONFIG = {"effort": "medium", "summary": "detailed"}
 MAX_OUTPUT_TOKENS = 16000
 
 # JSON schema for structured output
+NOTE_MAPPING_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "original": {"type": "string"},
+        "transposed": {"type": "string"},
+        "suggested": {"type": "string"},
+        "playable": {"type": "boolean"},
+        "substitution_reason": {"type": ["string", "null"]},
+    },
+    "required": [
+        "original",
+        "transposed",
+        "suggested",
+        "playable",
+        "substitution_reason",
+    ],
+    "additionalProperties": False,
+}
+
 AI_SUGGESTION_SCHEMA = {
     "type": "object",
     "properties": {
@@ -156,26 +177,13 @@ AI_SUGGESTION_SCHEMA = {
         "transposition_reasoning": {"type": "string"},
         "suggested_key": {"type": ["string", "null"]},
         "ocr_corrections": {"type": ["string", "null"]},
-        "note_mappings": {
+        "note_mapping_table": {
             "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "original": {"type": "string"},
-                    "transposed": {"type": "string"},
-                    "suggested": {"type": "string"},
-                    "playable": {"type": "boolean"},
-                    "substitution_reason": {"type": ["string", "null"]},
-                },
-                "required": [
-                    "original",
-                    "transposed",
-                    "suggested",
-                    "playable",
-                    "substitution_reason",
-                ],
-                "additionalProperties": False,
-            },
+            "items": NOTE_MAPPING_SCHEMA,
+        },
+        "note_sequence": {
+            "type": "array",
+            "items": NOTE_MAPPING_SCHEMA,
         },
         "musical_notes": {"type": "string"},
     },
@@ -184,7 +192,8 @@ AI_SUGGESTION_SCHEMA = {
         "transposition_reasoning",
         "suggested_key",
         "ocr_corrections",
-        "note_mappings",
+        "note_mapping_table",
+        "note_sequence",
         "musical_notes",
     ],
     "additionalProperties": False,
@@ -291,7 +300,11 @@ class AISuggestionService:
         debug_info["raw_response"] = response_text
 
         return self._parse_response(
-            response_text, extracted_music.key_signature, reasoning_summary, debug_info
+            response_text,
+            extracted_music.key_signature,
+            reasoning_summary,
+            debug_info,
+            expected_count=len(note_list),
         )
 
     def get_suggestions_streaming(
@@ -432,7 +445,11 @@ class AISuggestionService:
 
             # Parse and yield final result
             result = self._parse_response(
-                full_text, extracted_music.key_signature, full_reasoning, debug_info
+                full_text,
+                extracted_music.key_signature,
+                full_reasoning,
+                debug_info,
+                expected_count=len(note_list),
             )
             if result.debug_parse_error:
                 yield StreamEvent(
@@ -444,10 +461,10 @@ class AISuggestionService:
                     data=f"Could not parse AI response: {result.debug_parse_error}",
                 )
                 return
-            if not result.note_mappings:
+            if not result.note_sequence:
                 yield StreamEvent(
                     type="error",
-                    data="AI response contained no note mappings. Please try again.",
+                    data="AI response contained no note sequence. Please try again.",
                 )
                 return
             yield StreamEvent(type="complete", data="", final_response=result)
@@ -655,9 +672,10 @@ TASK:
 1. LOOK AT THE SHEET MUSIC IMAGE and read the actual notes. Compare with the OCR extraction above and note any discrepancies.
 2. If you recognize the song title, use your knowledge of the melody to verify the notes are correct.
 3. Determine the best transposition (in semitones) to maximize playability on this specific flute.
-4. Apply the transposition to all notes.
-5. For any notes that are STILL not playable after transposition, suggest the closest musically appropriate substitute from the available notes.
-6. Your goal is to create an arrangement that sounds correct and musical on this flute.
+4. Apply the transposition to all notes and create a note_mapping_table for unique pitch mappings.
+5. For any notes that are STILL not playable after transposition, suggest the closest musically appropriate substitute in the mapping table.
+6. Using the OCR note sequence above, apply the mapping table to generate note_sequence in the same order and length.
+7. Your goal is to create an arrangement that sounds correct and musical on this flute.
 
 IMPORTANT RULES:
 - TRUST THE IMAGE over the OCR extraction - read the notes yourself from the sheet music
@@ -666,6 +684,7 @@ IMPORTANT RULES:
 - When substituting notes, prefer notes that maintain the melodic contour (direction of movement)
 - For passing tones, a nearby available note is usually acceptable
 - For important melodic notes (like phrase endings), try harder to find a good substitute
+- note_sequence MUST have the same number of items as the OCR-extracted melody list, in the same order
 
 Return ONLY a JSON object with this exact structure:
 {{
@@ -673,8 +692,13 @@ Return ONLY a JSON object with this exact structure:
   "transposition_reasoning": "Explanation of why this transposition was chosen...",
   "suggested_key": "The new key after transposition (e.g., 'E minor')",
   "ocr_corrections": "Description of any OCR errors you noticed and corrected, or null if none",
-  "note_mappings": [
+  "note_mapping_table": [
     {{"original": "C4", "transposed": "C4", "suggested": "C4", "playable": true, "substitution_reason": null}},
+    {{"original": "Bb4", "transposed": "Bb4", "suggested": "B4", "playable": true, "substitution_reason": "Bb4 not available, using B4 as nearest option"}}
+  ],
+  "note_sequence": [
+    {{"original": "C4", "transposed": "C4", "suggested": "C4", "playable": true, "substitution_reason": null}},
+    {{"original": "D4", "transposed": "D4", "suggested": "D4", "playable": true, "substitution_reason": null}},
     {{"original": "Bb4", "transposed": "Bb4", "suggested": "B4", "playable": true, "substitution_reason": "Bb4 not available, using B4 as nearest option"}}
   ],
   "musical_notes": "Overall notes about this arrangement and any performance suggestions..."
@@ -687,7 +711,8 @@ Return ONLY the JSON object, no other text or markdown formatting."""
         response_text: str,
         original_key: Optional[str],
         reasoning_summary: Optional[str] = None,
-        debug_info: Optional[Dict[str, Any]] = None
+        debug_info: Optional[Dict[str, Any]] = None,
+        expected_count: Optional[int] = None
     ) -> AISuggestion:
         """
         Parse the AI response text into a structured AISuggestion.
@@ -726,21 +751,33 @@ Return ONLY the JSON object, no other text or markdown formatting."""
                 original_key, reasoning_summary, parse_error, debug_info
             )
 
-        # Parse note mappings
-        note_mappings = []
-        for mapping in data.get("note_mappings", []):
-            note_mappings.append(NoteSuggestion(
-                original=mapping.get("original", ""),
-                transposed=mapping.get("transposed", mapping.get("original", "")),
-                suggested=mapping.get("suggested", mapping.get("transposed", "")),
-                playable=mapping.get("playable", False),
-                substitution_reason=mapping.get("substitution_reason")
-            ))
+        mapping_table_raw = data.get("note_mapping_table")
+        if mapping_table_raw is None and "note_mappings" in data:
+            mapping_table_raw = data.get("note_mappings")
+        sequence_raw = data.get("note_sequence")
+
+        if sequence_raw is None:
+            parse_error = "Missing note_sequence in AI response"
+            return self._create_fallback_response(
+                original_key, reasoning_summary, parse_error, debug_info
+            )
+
+        note_mapping_table = self._parse_note_mappings(mapping_table_raw or [])
+        note_sequence = self._parse_note_mappings(sequence_raw)
+
+        if expected_count is not None and len(note_sequence) != expected_count:
+            parse_error = (
+                f"Note sequence length mismatch: expected {expected_count}, got {len(note_sequence)}"
+            )
+            return self._create_fallback_response(
+                original_key, reasoning_summary, parse_error, debug_info
+            )
 
         return AISuggestion(
             recommended_transposition=data.get("recommended_transposition", 0),
             transposition_reasoning=data.get("transposition_reasoning", ""),
-            note_mappings=note_mappings,
+            note_mapping_table=note_mapping_table,
+            note_sequence=note_sequence,
             musical_notes=data.get("musical_notes", ""),
             original_key=original_key,
             suggested_key=data.get("suggested_key"),
@@ -754,6 +791,21 @@ Return ONLY the JSON object, no other text or markdown formatting."""
             debug_request=debug_info.get("request"),
         )
 
+    def _parse_note_mappings(self, mappings: List[Dict[str, Any]]) -> List[NoteSuggestion]:
+        """Convert raw mapping list into NoteSuggestion objects."""
+        note_mappings: List[NoteSuggestion] = []
+        for mapping in mappings or []:
+            if not isinstance(mapping, dict):
+                continue
+            note_mappings.append(NoteSuggestion(
+                original=mapping.get("original", ""),
+                transposed=mapping.get("transposed", mapping.get("original", "")),
+                suggested=mapping.get("suggested", mapping.get("transposed", "")),
+                playable=mapping.get("playable", False),
+                substitution_reason=mapping.get("substitution_reason")
+            ))
+        return note_mappings
+
     def _create_fallback_response(
         self,
         original_key: Optional[str],
@@ -765,7 +817,8 @@ Return ONLY the JSON object, no other text or markdown formatting."""
         return AISuggestion(
             recommended_transposition=0,
             transposition_reasoning="Could not parse AI response",
-            note_mappings=[],
+            note_mapping_table=[],
+            note_sequence=[],
             musical_notes="Error processing AI suggestions. Please try again.",
             original_key=original_key,
             suggested_key=original_key,

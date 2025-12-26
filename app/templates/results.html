@@ -34,44 +34,17 @@
             {% endif %}
         </div>
     </div>
+</div>
 
-    {% if results %}
-    <div class="results-grid">
-        {% for result in results %}
-        <div class="result-card {% if not result.playable %}not-playable{% endif %}">
-            <div class="result-note">{{ result.note_key }}</div>
+{% if results %}
+{% set sequence_title = "Full Fingering Sequence" %}
+{% set sequence_subtitle = "Notes in order with their fingerings" %}
+{% set sequence_results = results %}
+{% include "partials/score_sequence.html" with context %}
 
-            {% if result.playable and result.fingering %}
-            <div class="result-diagram">
-                <svg viewBox="0 0 24 84" width="24" height="84">
-                    {% for i in range(3) %}
-                    <circle cx="12" cy="{{ 8 + i * 12 }}" r="5"
-                            stroke="#5d4e37" stroke-width="1.5"
-                            fill="{% if result.fingering[i] %}#5d4e37{% else %}white{% endif %}"/>
-                    {% endfor %}
-                    <line x1="4" y1="44" x2="20" y2="44" stroke="#e5e5e5" stroke-width="1"/>
-                    {% for i in range(3, 6) %}
-                    <circle cx="12" cy="{{ 52 + (i - 3) * 12 }}" r="5"
-                            stroke="#5d4e37" stroke-width="1.5"
-                            fill="{% if result.fingering[i] %}#5d4e37{% else %}white{% endif %}"/>
-                    {% endfor %}
-                </svg>
-                <div class="result-fingering">
-                    {{ result.fingering | map('string') | map('replace', '1', '●') | map('replace', '0', '○') | join('') }}
-                </div>
-            </div>
-            {% else %}
-            <div class="result-missing">
-                <span>?</span>
-                <div class="text-sm">Not mapped</div>
-            </div>
-            {% endif %}
-        </div>
-        {% endfor %}
-    </div>
-
-    <!-- Save to Library -->
-    <div class="mt-3" style="border-top: 1px solid var(--border); padding-top: 20px;">
+<!-- Save to Library -->
+<div class="card mb-3">
+    <div class="mt-3" style="padding: 16px 20px;">
         <div class="flex items-center justify-between gap-2" style="flex-wrap: wrap;">
             <div>
                 <p class="text-muted text-sm">Save this song to your library for future reference</p>
@@ -82,12 +55,12 @@
         </div>
         <div id="save-song-status" class="status hidden mt-2"></div>
     </div>
-    {% else %}
-    <div class="empty-state">
-        <p class="empty-text">No notes could be extracted from the image. Try a clearer image.</p>
-    </div>
-    {% endif %}
 </div>
+{% else %}
+<div class="empty-state">
+    <p class="empty-text">No notes could be extracted from the image. Try a clearer image.</p>
+</div>
+{% endif %}
 
 <script>
     const songData = {
@@ -106,7 +79,7 @@
         try {
             // Save only note_key - fingerings are calculated dynamically per flute
             const notesData = songData.notes.map(r => ({
-                note_key: r.note_key
+                note_key: r.suggested
             }));
 
             const res = await fetch('/api/songs', {

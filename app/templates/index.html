@@ -191,6 +191,10 @@
                 <span class="expand-icon">&#9660;</span>
             </summary>
             <div class="debug-content">
+                <div class="debug-actions">
+                    <button type="button" class="btn btn-secondary btn-sm" id="copy-debug-log">Copy Debug Log</button>
+                    <span class="debug-copy-status" id="debug-copy-status"></span>
+                </div>
                 <pre class="debug-log" id="debug-log"></pre>
             </div>
         </details>
@@ -235,6 +239,8 @@
         const streamingLog = document.getElementById('streaming-log');
         const streamingDebug = document.getElementById('streaming-debug');
         const debugLog = document.getElementById('debug-log');
+        const copyDebugBtn = document.getElementById('copy-debug-log');
+        const copyDebugStatus = document.getElementById('debug-copy-status');
         const retryPanel = document.getElementById('retry-panel');
         const retryOcrBtn = document.getElementById('retry-omr-btn');
         const retryAiBtn = document.getElementById('retry-ai-btn');
@@ -907,6 +913,53 @@
             debugLog.scrollTop = debugLog.scrollHeight;
         }
 
+        function setCopyStatus(message, isError) {
+            if (!copyDebugStatus) return;
+            copyDebugStatus.textContent = message;
+            copyDebugStatus.classList.toggle('error', Boolean(isError));
+            if (message) {
+                setTimeout(() => {
+                    if (copyDebugStatus.textContent === message) {
+                        copyDebugStatus.textContent = '';
+                        copyDebugStatus.classList.remove('error');
+                    }
+                }, 2000);
+            }
+        }
+
+        async function copyDebugLogToClipboard() {
+            if (!debugLog) return;
+            const text = debugLog.textContent.trim();
+            if (!text) {
+                setCopyStatus('Debug log is empty.', true);
+                return;
+            }
+            try {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    await navigator.clipboard.writeText(text);
+                } else {
+                    const textarea = document.createElement('textarea');
+                    textarea.value = text;
+                    textarea.setAttribute('readonly', '');
+                    textarea.style.position = 'absolute';
+                    textarea.style.left = '-9999px';
+                    document.body.appendChild(textarea);
+                    textarea.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(textarea);
+                }
+                setCopyStatus('Copied.');
+            } catch (err) {
+                setCopyStatus('Copy failed.', true);
+            }
+        }
+
+        if (copyDebugBtn) {
+            copyDebugBtn.addEventListener('click', () => {
+                copyDebugLogToClipboard();
+            });
+        }
+
         function updateRetryPanel(stage) {
             if (!retryPanel) return;
             const hasFile = fileInput.files && fileInput.files.length > 0;
@@ -967,6 +1020,8 @@
                     const notPlayable = !result.playable ? 'not-playable' : '';
                     const substituted = result.substitution_reason ? 'substituted' : '';
                     const showOriginal = result.original !== result.suggested;
+                    const originalText = escapeHtml(result.original);
+                    const suggestedText = escapeHtml(result.suggested);
 
                     let fingeringHtml = '';
                     if (result.playable && result.fingering) {
@@ -994,10 +1049,61 @@
 
                     return `
                         <div class="result-card ${notPlayable} ${substituted}">
-                            ${showOriginal ? `<div class="result-original">${result.original}</div>` : ''}
-                            <div class="result-note ${showOriginal ? 'result-suggested' : ''}">${result.suggested}</div>
+                            ${showOriginal ? `<div class="result-original">${originalText}</div>` : ''}
+                            <div class="result-note ${showOriginal ? 'result-suggested' : ''}">${suggestedText}</div>
                             ${fingeringHtml}
-                            ${result.substitution_reason ? `<div class="substitution-indicator" title="${result.substitution_reason}">&#8660;</div>` : ''}
+                            ${result.substitution_reason ? `<div class="substitution-indicator" title="${escapeHtml(result.substitution_reason)}">&#8660;</div>` : ''}
+                        </div>`;
+                }).join('');
+            }
+
+            let mappingGrid = '';
+            if (data.mapping_table && data.mapping_table.length > 0) {
+                mappingGrid = data.mapping_table.map(mapping => {
+                    const substituted = mapping.substitution_reason ? 'substituted' : '';
+                    let fingeringHtml = '';
+                    if (mapping.playable && mapping.fingering) {
+                        const upperCircles = mapping.fingering.slice(0, 3).map((hole, i) => {
+                            const y = 8 + i * 12;
+                            return `<circle cx="12" cy="${y}" r="5" stroke="#5d4e37" stroke-width="1.5" fill="${hole ? '#5d4e37' : 'white'}"/>`;
+                        });
+                        const lowerCircles = mapping.fingering.slice(3).map((hole, i) => {
+                            const y = 52 + i * 12;
+                            return `<circle cx="12" cy="${y}" r="5" stroke="#5d4e37" stroke-width="1.5" fill="${hole ? '#5d4e37' : 'white'}"/>`;
+                        });
+                        const fingeringStr = mapping.fingering.map(h => h ? '●' : '○').join('');
+                        fingeringHtml = `
+                            <div class="result-diagram">
+                                <svg viewBox="0 0 24 84" width="24" height="84">
+                                    ${upperCircles.join('')}
+                                    <line x1="4" y1="44" x2="20" y2="44" stroke="#e5e5e5" stroke-width="1"/>
+                                    ${lowerCircles.join('')}
+                                </svg>
+                                <div class="result-fingering">${fingeringStr}</div>
+                            </div>`;
+                    }
+
+                    const originalText = escapeHtml(mapping.original);
+                    const transposedText = escapeHtml(mapping.transposed);
+                    const suggestedText = escapeHtml(mapping.suggested);
+                    const substitutionText = mapping.substitution_reason ? escapeHtml(mapping.substitution_reason) : '';
+
+                    return `
+                        <div class="result-card mapping-card ${substituted}">
+                            <div class="mapping-row">
+                                <span class="mapping-label">Original</span>
+                                <span class="mapping-value">${originalText}</span>
+                            </div>
+                            <div class="mapping-row">
+                                <span class="mapping-label">Transposed</span>
+                                <span class="mapping-value">${transposedText}</span>
+                            </div>
+                            <div class="mapping-row">
+                                <span class="mapping-label">Suggested</span>
+                                <span class="mapping-value">${suggestedText}</span>
+                            </div>
+                            ${fingeringHtml}
+                            ${mapping.substitution_reason ? `<div class="mapping-note">${substitutionText}</div>` : ''}
                         </div>`;
                 }).join('');
             }
@@ -1044,6 +1150,17 @@
                         </div>
                     </details>
 
+                    ${mappingGrid ? `
+                    <div class="card mb-3">
+                        <div class="results-header">
+                            <div>
+                                <h3 class="results-title">AI Note Mapping</h3>
+                                <p class="results-meta">Unique mappings used to generate the full score</p>
+                            </div>
+                        </div>
+                        <div class="results-grid mapping-grid">${mappingGrid}</div>
+                    </div>` : ''}
+
                     ${notesGrid ? `
                     <div class="card mb-3">
                         <div class="results-header">
@@ -1053,9 +1170,7 @@
                             </div>
                         </div>
                         <div class="results-grid">${notesGrid}</div>
-                    </div>` : ''}
-
-                    ${notesGrid ? `<div class="results-grid ai-results-grid">${notesGrid}</div>` : '<div class="empty-state"><p class="empty-text">No notes could be extracted.</p></div>'}
+                    </div>` : '<div class="empty-state"><p class="empty-text">No notes could be extracted.</p></div>'}
 
                     ${notesGrid ? `
                     <div class="mt-3" style="border-top: 1px solid var(--border); padding-top: 20px;">

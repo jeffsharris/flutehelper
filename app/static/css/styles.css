@@ -813,6 +813,41 @@ a:hover {
     gap: 12px;
 }
 
+.mapping-grid {
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+}
+
+.mapping-card {
+    text-align: left;
+    padding: 12px 12px 10px 12px;
+}
+
+.mapping-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+.mapping-label {
+    font-size: 0.7rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+.mapping-value {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--primary);
+}
+
+.mapping-note {
+    margin-top: 8px;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
 .result-card {
     background: var(--card);
     border-radius: var(--radius-sm);
@@ -1535,6 +1570,22 @@ a:hover {
 
 .debug-section[open] .expand-icon {
     transform: rotate(180deg);
+}
+
+.debug-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 0 12px 0;
+}
+
+.debug-copy-status {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+.debug-copy-status.error {
+    color: var(--error);
 }
 
 .debug-content {

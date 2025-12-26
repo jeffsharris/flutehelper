@@ -233,11 +233,23 @@ async def _handle_ai_import(request, extracted_music, profile_fingerings,
         extracted_music, profile_fingerings, image_path=tmp_path
     )
 
-    # Build results with AI suggestions
+    # Build sequence results from AI suggestions
     ai_results = []
-    for mapping in ai_suggestion.note_mappings:
+    for mapping in ai_suggestion.note_sequence:
         fingering_data = profile_fingerings.get(mapping.suggested)
         ai_results.append({
+            "original": mapping.original,
+            "transposed": mapping.transposed,
+            "suggested": mapping.suggested,
+            "playable": mapping.playable,
+            "substitution_reason": mapping.substitution_reason,
+            "fingering": fingering_data.get("fingering") if fingering_data else None
+        })
+
+    mapping_table = []
+    for mapping in ai_suggestion.note_mapping_table:
+        fingering_data = profile_fingerings.get(mapping.suggested)
+        mapping_table.append({
             "original": mapping.original,
             "transposed": mapping.transposed,
             "suggested": mapping.suggested,
@@ -259,6 +271,7 @@ async def _handle_ai_import(request, extracted_music, profile_fingerings,
         "ocr_corrections": ai_suggestion.ocr_corrections,
         "reasoning_summary": ai_suggestion.reasoning_summary,
         "results": ai_results,
+        "mapping_table": mapping_table,
         "confidence": extracted_music.confidence,
         "note_count": len(ai_results),
         "playable_count": playable_count,
@@ -291,9 +304,11 @@ def _handle_standard_import(request, extracted_music, profile_fingerings,
         fingering_data = profile_fingerings.get(note_key)
 
         results.append({
-            "note_key": note_key,
+            "original": note_key,
+            "suggested": note_key,
+            "playable": fingering_data is not None,
+            "substitution_reason": None,
             "fingering": fingering_data.get("fingering") if fingering_data else None,
-            "playable": fingering_data is not None
         })
 
     playable_count = sum(1 for r in results if r["playable"])
@@ -842,7 +857,7 @@ def _serialize_ai_suggestion(ai_suggestion: AISuggestion) -> dict:
         "ocr_corrections": ai_suggestion.ocr_corrections,
         "musical_notes": ai_suggestion.musical_notes,
         "original_key": ai_suggestion.original_key,
-        "note_mappings": [
+        "note_mapping_table": [
             {
                 "original": mapping.original,
                 "transposed": mapping.transposed,
@@ -850,7 +865,17 @@ def _serialize_ai_suggestion(ai_suggestion: AISuggestion) -> dict:
                 "playable": mapping.playable,
                 "substitution_reason": mapping.substitution_reason,
             }
-            for mapping in ai_suggestion.note_mappings
+            for mapping in ai_suggestion.note_mapping_table
+        ],
+        "note_sequence": [
+            {
+                "original": mapping.original,
+                "transposed": mapping.transposed,
+                "suggested": mapping.suggested,
+                "playable": mapping.playable,
+                "substitution_reason": mapping.substitution_reason,
+            }
+            for mapping in ai_suggestion.note_sequence
         ],
     }
 
@@ -862,7 +887,7 @@ def _deserialize_ai_suggestion(payload: str) -> AISuggestion:
     except json.JSONDecodeError as exc:
         raise ValueError("Cached AI response could not be parsed.") from exc
     try:
-        note_mappings = [
+        mapping_table = [
             NoteSuggestion(
                 original=item.get("original", ""),
                 transposed=item.get("transposed", item.get("original", "")),
@@ -870,12 +895,25 @@ def _deserialize_ai_suggestion(payload: str) -> AISuggestion:
                 playable=bool(item.get("playable", False)),
                 substitution_reason=item.get("substitution_reason"),
             )
-            for item in data.get("note_mappings", [])
+            for item in data.get("note_mapping_table", [])
         ]
+        note_sequence = [
+            NoteSuggestion(
+                original=item.get("original", ""),
+                transposed=item.get("transposed", item.get("original", "")),
+                suggested=item.get("suggested", item.get("transposed", "")),
+                playable=bool(item.get("playable", False)),
+                substitution_reason=item.get("substitution_reason"),
+            )
+            for item in data.get("note_sequence", [])
+        ]
+        if not note_sequence:
+            raise ValueError("Cached AI response missing note sequence.")
         return AISuggestion(
             recommended_transposition=int(data.get("recommended_transposition", 0)),
             transposition_reasoning=data.get("transposition_reasoning", ""),
-            note_mappings=note_mappings,
+            note_mapping_table=mapping_table,
+            note_sequence=note_sequence,
             musical_notes=data.get("musical_notes", ""),
             original_key=data.get("original_key"),
             suggested_key=data.get("suggested_key"),
@@ -915,9 +953,21 @@ def _build_streaming_result(ai_suggestion, extracted_music, profile_fingerings,
                             profile, profile_id, filename):
     """Build the final result object for streaming response."""
     ai_results = []
-    for mapping in ai_suggestion.note_mappings:
+    for mapping in ai_suggestion.note_sequence:
         fingering_data = profile_fingerings.get(mapping.suggested)
         ai_results.append({
+            "original": mapping.original,
+            "transposed": mapping.transposed,
+            "suggested": mapping.suggested,
+            "playable": mapping.playable,
+            "substitution_reason": mapping.substitution_reason,
+            "fingering": fingering_data.get("fingering") if fingering_data else None
+        })
+
+    mapping_table = []
+    for mapping in ai_suggestion.note_mapping_table:
+        fingering_data = profile_fingerings.get(mapping.suggested)
+        mapping_table.append({
             "original": mapping.original,
             "transposed": mapping.transposed,
             "suggested": mapping.suggested,
@@ -938,6 +988,7 @@ def _build_streaming_result(ai_suggestion, extracted_music, profile_fingerings,
         "ocr_corrections": ai_suggestion.ocr_corrections,
         "reasoning_summary": ai_suggestion.reasoning_summary,
         "results": ai_results,
+        "mapping_table": mapping_table,
         "confidence": extracted_music.confidence,
         "note_count": len(ai_results),
         "playable_count": playable_count,

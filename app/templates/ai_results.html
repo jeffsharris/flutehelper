@@ -83,101 +83,65 @@
         </div>
     </details>
 
-    {% if results %}
+    {% if mapping_table %}
     <div class="card mb-3">
         <div class="results-header">
             <div>
-                <h3 class="results-title">Full Fingering Sequence</h3>
-                <p class="results-meta">Suggested notes in order with their fingerings</p>
+                <h3 class="results-title">AI Note Mapping</h3>
+                <p class="results-meta">Unique mappings used to generate the full score</p>
             </div>
         </div>
-        <div class="results-grid">
-            {% for result in results %}
-            <div class="result-card {% if not result.playable %}not-playable{% endif %} {% if result.substitution_reason %}substituted{% endif %}">
-                {% if result.original != result.suggested %}
-                <div class="result-original">{{ result.original }}</div>
-                {% endif %}
-                <div class="result-note {% if result.original != result.suggested %}result-suggested{% endif %}">
-                    {{ result.suggested }}
+        <div class="results-grid mapping-grid">
+            {% for mapping in mapping_table %}
+            <div class="result-card mapping-card {% if mapping.substitution_reason %}substituted{% endif %}">
+                <div class="mapping-row">
+                    <span class="mapping-label">Original</span>
+                    <span class="mapping-value">{{ mapping.original }}</span>
+                </div>
+                <div class="mapping-row">
+                    <span class="mapping-label">Transposed</span>
+                    <span class="mapping-value">{{ mapping.transposed }}</span>
+                </div>
+                <div class="mapping-row">
+                    <span class="mapping-label">Suggested</span>
+                    <span class="mapping-value">{{ mapping.suggested }}</span>
                 </div>
 
-                {% if result.playable and result.fingering %}
+                {% if mapping.playable and mapping.fingering %}
                 <div class="result-diagram">
                     <svg viewBox="0 0 24 84" width="24" height="84">
                         {% for i in range(3) %}
                         <circle cx="12" cy="{{ 8 + i * 12 }}" r="5"
                                 stroke="#5d4e37" stroke-width="1.5"
-                                fill="{% if result.fingering[i] %}#5d4e37{% else %}white{% endif %}"/>
+                                fill="{% if mapping.fingering[i] %}#5d4e37{% else %}white{% endif %}"/>
                         {% endfor %}
                         <line x1="4" y1="44" x2="20" y2="44" stroke="#e5e5e5" stroke-width="1"/>
                         {% for i in range(3, 6) %}
                         <circle cx="12" cy="{{ 52 + (i - 3) * 12 }}" r="5"
                                 stroke="#5d4e37" stroke-width="1.5"
-                                fill="{% if result.fingering[i] %}#5d4e37{% else %}white{% endif %}"/>
+                                fill="{% if mapping.fingering[i] %}#5d4e37{% else %}white{% endif %}"/>
                         {% endfor %}
                     </svg>
                     <div class="result-fingering">
-                        {% for hole in result.fingering %}{% if hole %}●{% else %}○{% endif %}{% endfor %}
+                        {% for hole in mapping.fingering %}{% if hole %}●{% else %}○{% endif %}{% endfor %}
                     </div>
                 </div>
-                {% else %}
-                <div class="result-missing">
-                    <span>?</span>
-                    <div class="text-sm">Not mapped</div>
-                </div>
+                {% endif %}
+
+                {% if mapping.substitution_reason %}
+                <div class="mapping-note">{{ mapping.substitution_reason }}</div>
                 {% endif %}
             </div>
             {% endfor %}
         </div>
     </div>
+    {% endif %}
 
-    <div class="results-grid ai-results-grid">
-        {% for result in results %}
-        <div class="result-card {% if not result.playable %}not-playable{% endif %} {% if result.substitution_reason %}substituted{% endif %}">
-            <!-- Original note (small) -->
-            {% if result.original != result.suggested %}
-            <div class="result-original">{{ result.original }}</div>
-            {% endif %}
-
-            <!-- Suggested note (main) -->
-            <div class="result-note {% if result.original != result.suggested %}result-suggested{% endif %}">
-                {{ result.suggested }}
-            </div>
-
-            {% if result.playable and result.fingering %}
-            <div class="result-diagram">
-                <svg viewBox="0 0 24 84" width="24" height="84">
-                    {% for i in range(3) %}
-                    <circle cx="12" cy="{{ 8 + i * 12 }}" r="5"
-                            stroke="#5d4e37" stroke-width="1.5"
-                            fill="{% if result.fingering[i] %}#5d4e37{% else %}white{% endif %}"/>
-                    {% endfor %}
-                    <line x1="4" y1="44" x2="20" y2="44" stroke="#e5e5e5" stroke-width="1"/>
-                    {% for i in range(3, 6) %}
-                    <circle cx="12" cy="{{ 52 + (i - 3) * 12 }}" r="5"
-                            stroke="#5d4e37" stroke-width="1.5"
-                            fill="{% if result.fingering[i] %}#5d4e37{% else %}white{% endif %}"/>
-                    {% endfor %}
-                </svg>
-                <div class="result-fingering">
-                    {% for hole in result.fingering %}{% if hole %}●{% else %}○{% endif %}{% endfor %}
-                </div>
-            </div>
-            {% else %}
-            <div class="result-missing">
-                <span>?</span>
-                <div class="text-sm">Not mapped</div>
-            </div>
-            {% endif %}
-
-            {% if result.substitution_reason %}
-            <div class="substitution-indicator" title="{{ result.substitution_reason }}">
-                &#8660;
-            </div>
-            {% endif %}
-        </div>
-        {% endfor %}
-    </div>
+    {% if results %}
+    {% set sequence_title = "Full Fingering Sequence" %}
+    {% set sequence_subtitle = "Suggested notes in order with their fingerings" %}
+    {% set sequence_results = results %}
+    {% include "partials/score_sequence.html" with context %}
 
     <!-- Save to Library -->
     <div class="mt-3" style="border-top: 1px solid var(--border); padding-top: 20px;">

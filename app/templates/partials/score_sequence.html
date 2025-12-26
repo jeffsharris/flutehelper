@@ -1,0 +1,54 @@
+<div class="card mb-3">
+    <div class="results-header">
+        <div>
+            <h3 class="results-title">{{ sequence_title }}</h3>
+            {% if sequence_subtitle %}
+            <p class="results-meta">{{ sequence_subtitle }}</p>
+            {% endif %}
+        </div>
+    </div>
+    <div class="results-grid">
+        {% for result in sequence_results %}
+        <div class="result-card {% if not result.playable %}not-playable{% endif %} {% if result.substitution_reason %}substituted{% endif %}">
+            {% if result.original and result.original != result.suggested %}
+            <div class="result-original">{{ result.original }}</div>
+            {% endif %}
+            <div class="result-note {% if result.original and result.original != result.suggested %}result-suggested{% endif %}">
+                {{ result.suggested }}
+            </div>
+
+            {% if result.playable and result.fingering %}
+            <div class="result-diagram">
+                <svg viewBox="0 0 24 84" width="24" height="84">
+                    {% for i in range(3) %}
+                    <circle cx="12" cy="{{ 8 + i * 12 }}" r="5"
+                            stroke="#5d4e37" stroke-width="1.5"
+                            fill="{% if result.fingering[i] %}#5d4e37{% else %}white{% endif %}"/>
+                    {% endfor %}
+                    <line x1="4" y1="44" x2="20" y2="44" stroke="#e5e5e5" stroke-width="1"/>
+                    {% for i in range(3, 6) %}
+                    <circle cx="12" cy="{{ 52 + (i - 3) * 12 }}" r="5"
+                            stroke="#5d4e37" stroke-width="1.5"
+                            fill="{% if result.fingering[i] %}#5d4e37{% else %}white{% endif %}"/>
+                    {% endfor %}
+                </svg>
+                <div class="result-fingering">
+                    {% for hole in result.fingering %}{% if hole %}●{% else %}○{% endif %}{% endfor %}
+                </div>
+            </div>
+            {% else %}
+            <div class="result-missing">
+                <span>?</span>
+                <div class="text-sm">Not mapped</div>
+            </div>
+            {% endif %}
+
+            {% if result.substitution_reason %}
+            <div class="substitution-indicator" title="{{ result.substitution_reason | e }}">
+                &#8660;
+            </div>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+</div>
