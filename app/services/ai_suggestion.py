@@ -1,59 +1,174 @@
-"""AI-powered suggestion service for optimizing sheet music for a specific flute."""
-import base64
+"""
+AI-powered music arrangement service for Native American flute.
+
+This module provides intelligent suggestions for adapting sheet music to work
+within the limited note range of Native American flutes. It uses the OpenAI
+Responses API with reasoning capabilities to:
+
+1. Analyze extracted notes from sheet music (with optional image verification)
+2. Recommend optimal transposition for the user's specific flute
+3. Suggest note substitutions when notes aren't playable
+4. Provide musical context and arrangement advice
+
+Key Classes:
+    StreamEvent: Event emitted during streaming for real-time updates
+    NoteSuggestion: Mapping from original note to suggested playable note
+    AISuggestion: Complete arrangement suggestion with all mappings
+    AISuggestionService: Main service class for generating suggestions
+
+Usage:
+    from app.services.ai_suggestion import ai_suggestion_service
+
+    # Non-streaming (waits for complete response)
+    suggestion = ai_suggestion_service.get_suggestions(
+        extracted_music, profile_fingerings, image_path="song.png"
+    )
+
+    # Streaming (yields events as AI processes)
+    for event in ai_suggestion_service.get_suggestions_streaming(...):
+        if event.type == "reasoning_delta":
+            print(event.data, end="")  # Real-time reasoning
+        elif event.type == "complete":
+            result = event.final_response
+"""
+
 import json
 import re
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import List, Optional, Dict, Any, Generator, AsyncGenerator
+from dataclasses import dataclass
+from typing import Any, Dict, Generator, List, Optional
 
 from openai import OpenAI
 
 from ..config import settings
 from ..models.notes import ExtractedMusic
+from ..utils.image import encode_image_base64, get_media_type
 
+
+# ============================================================
+# Data Classes
+# ============================================================
 
 @dataclass
 class StreamEvent:
-    """Event emitted during streaming."""
-    type: str  # 'reasoning_delta', 'text_delta', 'complete', 'error'
+    """
+    Event emitted during streaming AI responses.
+
+    Used to provide real-time updates to the frontend as the AI
+    processes the arrangement request.
+
+    Attributes:
+        type: Event type - one of:
+            - 'reasoning_delta': Chunk of reasoning summary text
+            - 'text_delta': Chunk of output text (JSON response)
+            - 'complete': Final parsed response ready
+            - 'error': Error occurred during processing
+        data: Event payload (text chunk or error message)
+        final_response: Complete AISuggestion (only for 'complete' type)
+    """
+    type: str
     data: str
     final_response: Optional['AISuggestion'] = None
 
 
 @dataclass
 class NoteSuggestion:
-    """Suggestion for a single note."""
-    original: str  # Original note from sheet music (e.g., "C4")
-    transposed: str  # Note after transposition (e.g., "D4")
-    suggested: str  # Final suggested note to play (e.g., "D4")
-    playable: bool  # Whether the suggested note is playable on this flute
-    substitution_reason: Optional[str] = None  # Reason if substituted
+    """
+    Mapping from an original note to a suggested playable note.
+
+    Attributes:
+        original: Original note from sheet music (e.g., "C4")
+        transposed: Note after transposition (e.g., "D4")
+        suggested: Final note to play, may differ if substituted (e.g., "D4")
+        playable: Whether the suggested note is playable on this flute
+        substitution_reason: Explanation if a substitution was made
+    """
+    original: str
+    transposed: str
+    suggested: str
+    playable: bool
+    substitution_reason: Optional[str] = None
 
 
 @dataclass
 class AISuggestion:
-    """AI-generated suggestion for arranging a song for a specific flute."""
-    recommended_transposition: int  # Semitones (positive = up, negative = down)
-    transposition_reasoning: str  # Why this transposition was chosen
-    note_mappings: List[NoteSuggestion]  # Mapping for each note
-    musical_notes: str  # Overall notes about the arrangement
-    original_key: Optional[str] = None  # Original key signature
-    suggested_key: Optional[str] = None  # Key after transposition
-    ocr_corrections: Optional[str] = None  # Description of any OCR errors corrected
-    reasoning_summary: Optional[str] = None  # AI's reasoning process summary
-    # Debug information
-    debug_raw_response: Optional[str] = None  # Raw text from AI
-    debug_parse_error: Optional[str] = None  # Any parsing error message
-    debug_model_used: Optional[str] = None  # Which model was used
-    debug_input_notes: Optional[List[str]] = None  # Notes sent to AI
-    debug_available_notes: Optional[List[str]] = None  # Available flute notes
-    debug_request: Optional[Dict[str, Any]] = None  # Full request payload sent to API
+    """
+    Complete AI-generated arrangement suggestion.
 
+    Contains all the information needed to display and save an
+    AI-arranged version of a song for a specific flute.
+
+    Attributes:
+        recommended_transposition: Semitones to shift (+ = up, - = down)
+        transposition_reasoning: AI's explanation for the transposition choice
+        note_mappings: List of NoteSuggestion for each note in the song
+        musical_notes: General arrangement advice and performance tips
+        original_key: Original key signature from sheet music
+        suggested_key: New key after transposition
+        ocr_corrections: Description of OCR errors the AI corrected
+        reasoning_summary: AI's reasoning process summary (from extended thinking)
+
+        Debug fields (for troubleshooting):
+        debug_raw_response: Raw text response from the AI
+        debug_parse_error: Any JSON parsing error that occurred
+        debug_model_used: Model that generated the response
+        debug_input_notes: Notes sent to the AI
+        debug_available_notes: Available fingerings on the flute
+        debug_request: Full API request payload
+    """
+    recommended_transposition: int
+    transposition_reasoning: str
+    note_mappings: List[NoteSuggestion]
+    musical_notes: str
+    original_key: Optional[str] = None
+    suggested_key: Optional[str] = None
+    ocr_corrections: Optional[str] = None
+    reasoning_summary: Optional[str] = None
+    # Debug fields
+    debug_raw_response: Optional[str] = None
+    debug_parse_error: Optional[str] = None
+    debug_model_used: Optional[str] = None
+    debug_input_notes: Optional[List[str]] = None
+    debug_available_notes: Optional[List[str]] = None
+    debug_request: Optional[Dict[str, Any]] = None
+
+
+# ============================================================
+# Constants
+# ============================================================
+
+# System instructions for the AI model
+SYSTEM_INSTRUCTIONS = """You are a music arrangement expert specializing in Native American flute. \
+You help adapt sheet music to work within the limited note range of these instruments \
+while preserving the musical character of the piece."""
+
+# Reasoning configuration - use medium effort for balance of quality and speed
+REASONING_CONFIG = {"effort": "medium", "summary": "detailed"}
+
+
+# ============================================================
+# Service Class
+# ============================================================
 
 class AISuggestionService:
-    """Service for generating AI-powered arrangement suggestions."""
+    """
+    Service for generating AI-powered arrangement suggestions.
+
+    This service uses the OpenAI Responses API with vision and reasoning
+    to analyze sheet music and suggest optimal arrangements for Native
+    American flute.
+
+    The service supports both synchronous and streaming modes:
+    - get_suggestions(): Blocks until complete response
+    - get_suggestions_streaming(): Yields events for real-time updates
+    """
 
     def __init__(self, api_key: Optional[str] = None):
+        """
+        Initialize the AI suggestion service.
+
+        Args:
+            api_key: OpenAI API key. If not provided, uses settings.OPENAI_API_KEY
+        """
         self.client = OpenAI(api_key=api_key or settings.OPENAI_API_KEY)
         self.model = settings.OPENAI_MODEL
 
@@ -64,100 +179,53 @@ class AISuggestionService:
         image_path: Optional[str] = None
     ) -> AISuggestion:
         """
-        Get AI suggestions for the best way to play this music on the given flute.
+        Get AI suggestions for arranging music for a specific flute.
+
+        This is the synchronous version that waits for the complete response.
+        Use get_suggestions_streaming() for real-time updates.
 
         Args:
-            extracted_music: The notes extracted from sheet music
-            profile_fingerings: Dict of available fingerings on the user's flute
-                               Keys are note names like "E4", "F#4", etc.
-            image_path: Path to the original sheet music image for visual verification
+            extracted_music: Notes extracted from sheet music via OCR
+            profile_fingerings: Dict mapping note names (e.g., "E4") to fingering data
+            image_path: Optional path to original image for AI visual verification
 
         Returns:
             AISuggestion with recommended transposition and note mappings
         """
-        # Build list of extracted notes
-        note_list = []
-        for note in extracted_music.notes:
-            note_key = f"{note.name.value}"
-            if note.accidental.value == "sharp":
-                note_key += "#"
-            elif note.accidental.value == "flat":
-                note_key += "b"
-            note_key += str(note.octave)
-            note_list.append(note_key)
-
-        # Get available notes on this flute
+        # Prepare the request
+        note_list = self._extract_note_list(extracted_music)
         available_notes = sorted(profile_fingerings.keys())
+        prompt = self._build_prompt(note_list, available_notes, extracted_music)
+        input_content = self._build_input_content(prompt, image_path)
+        request_payload = self._build_request_payload(input_content)
 
-        prompt = self._build_prompt(
-            note_list,
-            available_notes,
-            extracted_music.key_signature,
-            extracted_music.title
-        )
-
-        # Build input content for Responses API - include image if available
-        input_content = []
-
-        if image_path:
-            # Add the original image for visual verification
-            image_data = self._encode_image(image_path)
-            media_type = self._get_media_type(image_path)
-            input_content.append({
-                "type": "input_image",
-                "image_url": f"data:{media_type};base64,{image_data}"
-            })
-
-        input_content.append({
-            "type": "input_text",
-            "text": prompt
-        })
-
-        # Build the request payload
-        request_payload = {
-            "model": self.model,
-            "instructions": "You are a music arrangement expert specializing in Native American flute. You help adapt sheet music to work within the limited note range of these instruments while preserving the musical character of the piece.",
-            "input": [{
-                "role": "user",
-                "content": self._sanitize_input_for_debug(input_content)
-            }],
-            "reasoning": {"effort": "high", "summary": "detailed"},
-            "max_output_tokens": 4096,
-        }
-
-        # Use Responses API with reasoning for better intelligence
+        # Call the API
         response = self.client.responses.create(
             model=self.model,
-            instructions=request_payload["instructions"],
-            input=[{
-                "role": "user",
-                "content": input_content
-            }],
-            reasoning={"effort": "high", "summary": "detailed"},
+            instructions=SYSTEM_INSTRUCTIONS,
+            input=[{"role": "user", "content": input_content}],
+            reasoning=REASONING_CONFIG,
             max_output_tokens=4096,
         )
 
-        # Extract reasoning summary if available
-        reasoning_summary = None
-        for output_item in response.output:
-            if output_item.type == "reasoning" and output_item.summary:
-                # Collect all summary text
-                reasoning_summary = "\n".join(s.text for s in output_item.summary if s.text)
-                break
+        # Extract reasoning summary
+        reasoning_summary = self._extract_reasoning_summary(response)
 
-        # Get the text response
-        response_text = response.output_text
+        # Get text response (may be empty if model only produced reasoning)
+        response_text = response.output_text or ""
 
-        # Prepare debug info
+        # Build debug info
         debug_info = {
             "raw_response": response_text,
             "model_used": self.model,
             "input_notes": note_list,
             "available_notes": available_notes,
-            "request": request_payload
+            "request": request_payload,
         }
 
-        return self._parse_response(response_text, extracted_music.key_signature, reasoning_summary, debug_info)
+        return self._parse_response(
+            response_text, extracted_music.key_signature, reasoning_summary, debug_info
+        )
 
     def get_suggestions_streaming(
         self,
@@ -166,157 +234,134 @@ class AISuggestionService:
         image_path: Optional[str] = None
     ) -> Generator[StreamEvent, None, None]:
         """
-        Stream AI suggestions with real-time reasoning summary display.
+        Stream AI suggestions with real-time reasoning display.
 
-        Yields StreamEvent objects as the AI processes:
-        - 'reasoning_delta': Partial reasoning summary text
-        - 'text_delta': Partial output text
-        - 'complete': Final parsed response
+        Yields StreamEvent objects as the AI processes the request,
+        allowing the frontend to show reasoning in real-time.
 
         Args:
-            extracted_music: The notes extracted from sheet music
-            profile_fingerings: Dict of available fingerings on the user's flute
-            image_path: Path to the original sheet music image for visual verification
+            extracted_music: Notes extracted from sheet music via OCR
+            profile_fingerings: Dict mapping note names to fingering data
+            image_path: Optional path to original image for verification
 
         Yields:
-            StreamEvent objects for each chunk of reasoning/text
+            StreamEvent objects:
+            - type='reasoning_delta': Partial reasoning text
+            - type='text_delta': Partial output text (usually not displayed)
+            - type='complete': Final parsed AISuggestion
+            - type='error': Error message if something fails
         """
-        # Build list of extracted notes
+        # Prepare the request
+        note_list = self._extract_note_list(extracted_music)
+        available_notes = sorted(profile_fingerings.keys())
+        prompt = self._build_prompt(note_list, available_notes, extracted_music)
+        input_content = self._build_input_content(prompt, image_path)
+        request_payload = self._build_request_payload(input_content)
+
+        # Debug info (updated as we stream)
+        debug_info = {
+            "raw_response": "",
+            "model_used": self.model,
+            "input_notes": note_list,
+            "available_notes": available_notes,
+            "request": request_payload,
+        }
+
+        # Collect streamed content
+        reasoning_parts: List[str] = []
+        text_parts: List[str] = []
+
+        try:
+            with self.client.responses.stream(
+                model=self.model,
+                instructions=SYSTEM_INSTRUCTIONS,
+                input=[{"role": "user", "content": input_content}],
+                reasoning=REASONING_CONFIG,
+                max_output_tokens=4096,
+            ) as stream:
+                for event in stream:
+                    if event.type == "response.reasoning_summary_text.delta":
+                        reasoning_parts.append(event.delta)
+                        yield StreamEvent(type="reasoning_delta", data=event.delta)
+                    elif event.type == "response.output_text.delta":
+                        text_parts.append(event.delta)
+                        yield StreamEvent(type="text_delta", data=event.delta)
+
+                # Get final response for any additional data
+                stream.get_final_response()
+
+            # Assemble complete texts
+            full_reasoning = "".join(reasoning_parts) or None
+            full_text = "".join(text_parts)
+            debug_info["raw_response"] = full_text
+
+            # Parse and yield final result
+            result = self._parse_response(
+                full_text, extracted_music.key_signature, full_reasoning, debug_info
+            )
+            yield StreamEvent(type="complete", data="", final_response=result)
+
+        except Exception as e:
+            yield StreamEvent(type="error", data=str(e))
+
+    # ============================================================
+    # Private Helper Methods
+    # ============================================================
+
+    def _extract_note_list(self, extracted_music: ExtractedMusic) -> List[str]:
+        """Convert ExtractedMusic notes to string list like ['E4', 'F#4', ...]."""
         note_list = []
         for note in extracted_music.notes:
-            note_key = f"{note.name.value}"
+            note_key = note.name.value
             if note.accidental.value == "sharp":
                 note_key += "#"
             elif note.accidental.value == "flat":
                 note_key += "b"
             note_key += str(note.octave)
             note_list.append(note_key)
+        return note_list
 
-        # Get available notes on this flute
-        available_notes = sorted(profile_fingerings.keys())
-
-        prompt = self._build_prompt(
-            note_list,
-            available_notes,
-            extracted_music.key_signature,
-            extracted_music.title
-        )
-
-        # Build input content for Responses API
-        input_content = []
+    def _build_input_content(
+        self, prompt: str, image_path: Optional[str]
+    ) -> List[Dict[str, Any]]:
+        """Build the input content array for the API request."""
+        content: List[Dict[str, Any]] = []
 
         if image_path:
-            image_data = self._encode_image(image_path)
-            media_type = self._get_media_type(image_path)
-            input_content.append({
+            image_data = encode_image_base64(image_path)
+            media_type = get_media_type(image_path)
+            content.append({
                 "type": "input_image",
                 "image_url": f"data:{media_type};base64,{image_data}"
             })
 
-        input_content.append({
-            "type": "input_text",
-            "text": prompt
-        })
+        content.append({"type": "input_text", "text": prompt})
+        return content
 
-        # Build request payload for debug
-        request_payload = {
+    def _build_request_payload(
+        self, input_content: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Build request payload for debug logging (with truncated images)."""
+        return {
             "model": self.model,
-            "instructions": "You are a music arrangement expert specializing in Native American flute. You help adapt sheet music to work within the limited note range of these instruments while preserving the musical character of the piece.",
-            "input": [{
-                "role": "user",
-                "content": self._sanitize_input_for_debug(input_content)
-            }],
-            "reasoning": {"effort": "high", "summary": "detailed"},
+            "instructions": SYSTEM_INSTRUCTIONS,
+            "input": [{"role": "user", "content": self._sanitize_for_debug(input_content)}],
+            "reasoning": REASONING_CONFIG,
             "max_output_tokens": 4096,
         }
 
-        # Prepare debug info
-        debug_info = {
-            "raw_response": "",
-            "model_used": self.model,
-            "input_notes": note_list,
-            "available_notes": available_notes,
-            "request": request_payload
-        }
-
-        # Collect pieces as we stream
-        reasoning_summary_parts = []
-        output_text_parts = []
-
-        try:
-            # Use the Responses API streaming interface
-            with self.client.responses.stream(
-                model=self.model,
-                instructions=request_payload["instructions"],
-                input=[{
-                    "role": "user",
-                    "content": input_content
-                }],
-                reasoning={"effort": "high", "summary": "detailed"},
-                max_output_tokens=4096,
-            ) as stream:
-                for event in stream:
-                    # Handle reasoning summary deltas
-                    if event.type == "response.reasoning_summary_text.delta":
-                        reasoning_summary_parts.append(event.delta)
-                        yield StreamEvent(type="reasoning_delta", data=event.delta)
-
-                    # Handle output text deltas
-                    elif event.type == "response.output_text.delta":
-                        output_text_parts.append(event.delta)
-                        yield StreamEvent(type="text_delta", data=event.delta)
-
-                # Get the final response
-                final_response = stream.get_final_response()
-
-            # Assemble full texts
-            full_reasoning = "".join(reasoning_summary_parts)
-            full_text = "".join(output_text_parts)
-            debug_info["raw_response"] = full_text
-
-            # Parse the final response
-            result = self._parse_response(
-                full_text,
-                extracted_music.key_signature,
-                full_reasoning if full_reasoning else None,
-                debug_info
-            )
-
-            yield StreamEvent(type="complete", data="", final_response=result)
-
-        except Exception as e:
-            yield StreamEvent(type="error", data=str(e))
-
-    def _encode_image(self, image_path: str) -> str:
-        """Read and base64 encode an image file."""
-        with open(image_path, "rb") as f:
-            return base64.standard_b64encode(f.read()).decode("utf-8")
-
-    def _get_media_type(self, image_path: str) -> str:
-        """Determine MIME type from file extension."""
-        path = Path(image_path)
-        ext = path.suffix.lower()
-        if ext == ".png":
-            return "image/png"
-        elif ext in [".jpg", ".jpeg"]:
-            return "image/jpeg"
-        elif ext == ".gif":
-            return "image/gif"
-        elif ext == ".webp":
-            return "image/webp"
-        return "image/png"
-
-    def _sanitize_input_for_debug(self, input_content: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Sanitize input content for debug output (truncate base64 images)."""
+    def _sanitize_for_debug(
+        self, input_content: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Truncate base64 images in input content for readable debug output."""
         sanitized = []
         for item in input_content:
             if item.get("type") == "input_image":
-                # Truncate long base64 data for readability
                 url = item.get("image_url", "")
                 if url.startswith("data:") and len(url) > 200:
                     sanitized.append({
                         "type": "input_image",
-                        "image_url": url[:100] + f"...[truncated, {len(url)} chars total]"
+                        "image_url": f"{url[:100]}...[truncated, {len(url)} chars]"
                     })
                 else:
                     sanitized.append(item)
@@ -324,24 +369,26 @@ class AISuggestionService:
                 sanitized.append(item)
         return sanitized
 
+    def _extract_reasoning_summary(self, response) -> Optional[str]:
+        """Extract reasoning summary from API response output items."""
+        for item in response.output:
+            if item.type == "reasoning" and hasattr(item, 'summary') and item.summary:
+                texts = [s.text for s in item.summary if hasattr(s, 'text') and s.text]
+                if texts:
+                    return "\n".join(texts)
+        return None
+
     def _build_prompt(
         self,
         note_list: List[str],
         available_notes: List[str],
-        key_signature: Optional[str],
-        song_title: Optional[str] = None
+        extracted_music: ExtractedMusic
     ) -> str:
         """Build the prompt for the AI model."""
-        notes_str = ", ".join(note_list)
+        notes_str = ", ".join(note_list) if note_list else "No notes extracted"
         available_str = ", ".join(available_notes) if available_notes else "No fingerings recorded yet"
-        key_info = f"Original key: {key_signature}" if key_signature else "Key signature not detected"
-
-        # Include song title context
-        song_context = ""
-        if song_title:
-            song_context = f"""
-SONG TITLE: {song_title}
-"""
+        key_info = f"Original key: {extracted_music.key_signature}" if extracted_music.key_signature else "Key signature not detected"
+        song_context = f"\nSONG TITLE: {extracted_music.title}\n" if extracted_music.title else ""
 
         return f"""You are helping arrange sheet music for a Native American flute with limited notes.
 
@@ -393,50 +440,50 @@ Return ONLY the JSON object, no other text or markdown formatting."""
         reasoning_summary: Optional[str] = None,
         debug_info: Optional[Dict[str, Any]] = None
     ) -> AISuggestion:
-        """Parse the AI response into structured data."""
+        """
+        Parse the AI response text into a structured AISuggestion.
+
+        Handles various edge cases:
+        - Empty responses
+        - Markdown code blocks around JSON
+        - Partial JSON extraction from mixed content
+        """
         debug_info = debug_info or {}
         parse_error = None
 
-        # Clean up response (remove markdown code blocks if present)
-        text = response_text.strip() if response_text else ""
+        # Handle empty response
+        text = (response_text or "").strip()
+        if not text:
+            parse_error = "Empty response from AI model"
+            return self._create_fallback_response(
+                original_key, reasoning_summary, parse_error, debug_info
+            )
+
+        # Remove markdown code blocks if present
         if text.startswith("```"):
             lines = text.split("\n")
-            text = "\n".join(lines[1:-1])
+            # Skip first line (```json) and last line (```)
+            text = "\n".join(lines[1:-1] if len(lines) > 2 else lines)
 
+        # Try to parse JSON
+        data = None
         try:
             data = json.loads(text)
         except json.JSONDecodeError as e:
-            parse_error = f"JSON decode error: {str(e)}"
-            # Try to extract JSON from the response
+            parse_error = f"JSON decode error: {e}"
+            # Try to extract JSON object from mixed content
             json_match = re.search(r'\{.*\}', text, re.DOTALL)
             if json_match:
                 try:
                     data = json.loads(json_match.group())
-                    parse_error = None  # Successfully extracted JSON
+                    parse_error = None  # Successfully recovered
                 except json.JSONDecodeError as e2:
-                    parse_error = f"JSON decode error after regex: {str(e2)}"
-                    data = None
-            else:
-                parse_error = f"No JSON found in response. Original error: {str(e)}"
-                data = None
+                    parse_error = f"JSON extraction failed: {e2}"
 
-            if data is None:
-                # Return a fallback response with debug info
-                return AISuggestion(
-                    recommended_transposition=0,
-                    transposition_reasoning="Could not parse AI response",
-                    note_mappings=[],
-                    musical_notes="Error processing AI suggestions. Please try again.",
-                    original_key=original_key,
-                    suggested_key=original_key,
-                    reasoning_summary=reasoning_summary,
-                    debug_raw_response=debug_info.get("raw_response"),
-                    debug_parse_error=parse_error,
-                    debug_model_used=debug_info.get("model_used"),
-                    debug_input_notes=debug_info.get("input_notes"),
-                    debug_available_notes=debug_info.get("available_notes"),
-                    debug_request=debug_info.get("request")
-                )
+        if data is None:
+            return self._create_fallback_response(
+                original_key, reasoning_summary, parse_error, debug_info
+            )
 
         # Parse note mappings
         note_mappings = []
@@ -463,9 +510,33 @@ Return ONLY the JSON object, no other text or markdown formatting."""
             debug_model_used=debug_info.get("model_used"),
             debug_input_notes=debug_info.get("input_notes"),
             debug_available_notes=debug_info.get("available_notes"),
-            debug_request=debug_info.get("request")
+            debug_request=debug_info.get("request"),
+        )
+
+    def _create_fallback_response(
+        self,
+        original_key: Optional[str],
+        reasoning_summary: Optional[str],
+        parse_error: str,
+        debug_info: Dict[str, Any]
+    ) -> AISuggestion:
+        """Create a fallback response when parsing fails."""
+        return AISuggestion(
+            recommended_transposition=0,
+            transposition_reasoning="Could not parse AI response",
+            note_mappings=[],
+            musical_notes="Error processing AI suggestions. Please try again.",
+            original_key=original_key,
+            suggested_key=original_key,
+            reasoning_summary=reasoning_summary,
+            debug_raw_response=debug_info.get("raw_response"),
+            debug_parse_error=parse_error,
+            debug_model_used=debug_info.get("model_used"),
+            debug_input_notes=debug_info.get("input_notes"),
+            debug_available_notes=debug_info.get("available_notes"),
+            debug_request=debug_info.get("request"),
         )
 
 
-# Singleton instance
+# Singleton instance for use throughout the application
 ai_suggestion_service = AISuggestionService()
