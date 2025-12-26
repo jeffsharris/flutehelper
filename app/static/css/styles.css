@@ -1531,3 +1531,68 @@ a:hover {
 .debug-item .raw-response {
     max-height: 400px;
 }
+
+/* ===== Streaming Panel ===== */
+.streaming-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 12px;
+    margin-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+}
+
+.streaming-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+    color: var(--primary);
+}
+
+.streaming-icon {
+    font-size: 1.25rem;
+}
+
+.streaming-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+}
+
+.streaming-content {
+    max-height: 200px;
+    overflow-y: auto;
+    background: var(--bg);
+    border-radius: var(--radius-sm);
+    padding: 12px;
+}
+
+.streaming-text {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: 0.9rem;
+    line-height: 1.6;
+    color: var(--text);
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
+.streaming-text:empty::before {
+    content: "Waiting for AI reasoning...";
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+/* Blinking cursor effect */
+.streaming-text::after {
+    content: "▋";
+    animation: blink 1s infinite;
+    color: var(--primary);
+}
+
+@keyframes blink {
+    0%, 50% { opacity: 1; }
+    51%, 100% { opacity: 0; }
+}

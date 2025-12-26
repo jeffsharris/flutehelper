@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, File, Request, UploadFile, Form
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from .config import settings
 from .services.omr_service import OMRService
 from .services.fingering_mapper import FingeringMapper
-from .services.ai_suggestion import ai_suggestion_service
+from .services.ai_suggestion import ai_suggestion_service, StreamEvent
 from .services.music_utils import (
     transpose_notes, analyze_playability, find_optimal_transposition,
     find_nearest_playable, get_key_name
@@ -236,7 +236,8 @@ async def upload_sheet_music(
                 "debug_parse_error": ai_suggestion.debug_parse_error,
                 "debug_model_used": ai_suggestion.debug_model_used,
                 "debug_input_notes": ai_suggestion.debug_input_notes,
-                "debug_available_notes": ai_suggestion.debug_available_notes
+                "debug_available_notes": ai_suggestion.debug_available_notes,
+                "debug_request": ai_suggestion.debug_request
             })
 
         # Standard Import Mode
@@ -279,6 +280,128 @@ async def upload_sheet_music(
         })
     finally:
         Path(tmp_path).unlink(missing_ok=True)
+
+
+@app.post("/upload-stream")
+async def upload_sheet_music_streaming(
+    file: UploadFile = File(...),
+    profile_id: str = Form(...)
+):
+    """
+    Process uploaded sheet music with streaming AI reasoning.
+    Returns Server-Sent Events with real-time reasoning and final results.
+    """
+    profiles = load_profiles()
+
+    if not file.filename:
+        async def error_gen():
+            yield f"data: {json.dumps({'type': 'error', 'data': 'No file provided'})}\n\n"
+        return StreamingResponse(error_gen(), media_type="text/event-stream")
+
+    if not file.filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+        async def error_gen():
+            yield f"data: {json.dumps({'type': 'error', 'data': 'Please upload a PNG or JPG image'})}\n\n"
+        return StreamingResponse(error_gen(), media_type="text/event-stream")
+
+    if profile_id not in profiles:
+        async def error_gen():
+            yield f"data: {json.dumps({'type': 'error', 'data': 'Please select or create a flute profile first'})}\n\n"
+        return StreamingResponse(error_gen(), media_type="text/event-stream")
+
+    # Update last used profile
+    app_settings = get_settings()
+    app_settings["last_profile"] = profile_id
+    save_settings(app_settings)
+
+    # Save to temp file
+    suffix = Path(file.filename).suffix
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        shutil.copyfileobj(file.file, tmp)
+        tmp_path = tmp.name
+
+    async def generate():
+        try:
+            # First, do the OCR extraction
+            yield f"data: {json.dumps({'type': 'status', 'data': 'Extracting notes from image...'})}\n\n"
+            extracted_music = await omr_service.process_image(tmp_path)
+
+            # Get profile fingerings
+            profile = profiles[profile_id]
+            profile_fingerings = profile.get("fingerings", {})
+
+            yield f"data: {json.dumps({'type': 'status', 'data': 'AI is analyzing the arrangement...'})}\n\n"
+
+            # Stream the AI suggestions with reasoning
+            for event in ai_suggestion_service.get_suggestions_streaming(
+                extracted_music, profile_fingerings, image_path=tmp_path
+            ):
+                if event.type == "reasoning_delta":
+                    yield f"data: {json.dumps({'type': 'reasoning', 'data': event.data})}\n\n"
+                elif event.type == "text_delta":
+                    # We don't show raw JSON output to user, just continue
+                    pass
+                elif event.type == "complete":
+                    # Build final results
+                    ai_suggestion = event.final_response
+                    ai_results = []
+                    for mapping in ai_suggestion.note_mappings:
+                        fingering_data = profile_fingerings.get(mapping.suggested)
+                        ai_results.append({
+                            "original": mapping.original,
+                            "transposed": mapping.transposed,
+                            "suggested": mapping.suggested,
+                            "playable": mapping.playable,
+                            "substitution_reason": mapping.substitution_reason,
+                            "fingering": fingering_data.get("fingering") if fingering_data else None
+                        })
+
+                    playable_count = sum(1 for r in ai_results if r["playable"])
+
+                    final_data = {
+                        "type": "complete",
+                        "data": {
+                            "title": extracted_music.title or file.filename,
+                            "original_key": ai_suggestion.original_key,
+                            "suggested_key": ai_suggestion.suggested_key,
+                            "transposition": ai_suggestion.recommended_transposition,
+                            "transposition_reasoning": ai_suggestion.transposition_reasoning,
+                            "musical_notes": ai_suggestion.musical_notes,
+                            "ocr_corrections": ai_suggestion.ocr_corrections,
+                            "reasoning_summary": ai_suggestion.reasoning_summary,
+                            "results": ai_results,
+                            "confidence": extracted_music.confidence,
+                            "note_count": len(ai_results),
+                            "playable_count": playable_count,
+                            "profile_id": profile_id,
+                            "profile_name": profile.get("name", "Unknown"),
+                            # Debug info
+                            "debug_raw_response": ai_suggestion.debug_raw_response,
+                            "debug_parse_error": ai_suggestion.debug_parse_error,
+                            "debug_model_used": ai_suggestion.debug_model_used,
+                            "debug_input_notes": ai_suggestion.debug_input_notes,
+                            "debug_available_notes": ai_suggestion.debug_available_notes,
+                            "debug_request": ai_suggestion.debug_request
+                        }
+                    }
+                    yield f"data: {json.dumps(final_data)}\n\n"
+
+                elif event.type == "error":
+                    yield f"data: {json.dumps({'type': 'error', 'data': event.data})}\n\n"
+
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'data': str(e)})}\n\n"
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
 
 
 @app.get("/discover", response_class=HTMLResponse)

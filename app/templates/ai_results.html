@@ -151,7 +151,7 @@
     {% endif %}
 
     <!-- Debug Information (collapsible) -->
-    {% if debug_raw_response or debug_parse_error %}
+    {% if debug_raw_response or debug_parse_error or debug_request %}
     <details class="debug-section">
         <summary class="debug-header">
             <span>Debug Information</span>
@@ -190,6 +190,13 @@
             <div class="debug-item">
                 <strong>Raw AI Response:</strong>
                 <pre class="raw-response">{{ debug_raw_response }}</pre>
+            </div>
+            {% endif %}
+
+            {% if debug_request %}
+            <div class="debug-item">
+                <strong>API Request Payload:</strong>
+                <pre class="raw-response">{{ debug_request | tojson(indent=2) }}</pre>
             </div>
             {% endif %}
         </div>

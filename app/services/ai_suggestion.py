@@ -4,12 +4,20 @@ import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Generator, AsyncGenerator
 
 from openai import OpenAI
 
 from ..config import settings
 from ..models.notes import ExtractedMusic
+
+
+@dataclass
+class StreamEvent:
+    """Event emitted during streaming."""
+    type: str  # 'reasoning_delta', 'text_delta', 'complete', 'error'
+    data: str
+    final_response: Optional['AISuggestion'] = None
 
 
 @dataclass
@@ -39,6 +47,7 @@ class AISuggestion:
     debug_model_used: Optional[str] = None  # Which model was used
     debug_input_notes: Optional[List[str]] = None  # Notes sent to AI
     debug_available_notes: Optional[List[str]] = None  # Available flute notes
+    debug_request: Optional[Dict[str, Any]] = None  # Full request payload sent to API
 
 
 class AISuggestionService:
@@ -104,10 +113,22 @@ class AISuggestionService:
             "text": prompt
         })
 
+        # Build the request payload
+        request_payload = {
+            "model": self.model,
+            "instructions": "You are a music arrangement expert specializing in Native American flute. You help adapt sheet music to work within the limited note range of these instruments while preserving the musical character of the piece.",
+            "input": [{
+                "role": "user",
+                "content": self._sanitize_input_for_debug(input_content)
+            }],
+            "reasoning": {"effort": "high", "summary": "detailed"},
+            "max_output_tokens": 4096,
+        }
+
         # Use Responses API with reasoning for better intelligence
         response = self.client.responses.create(
             model=self.model,
-            instructions="You are a music arrangement expert specializing in Native American flute. You help adapt sheet music to work within the limited note range of these instruments while preserving the musical character of the piece.",
+            instructions=request_payload["instructions"],
             input=[{
                 "role": "user",
                 "content": input_content
@@ -132,10 +153,139 @@ class AISuggestionService:
             "raw_response": response_text,
             "model_used": self.model,
             "input_notes": note_list,
-            "available_notes": available_notes
+            "available_notes": available_notes,
+            "request": request_payload
         }
 
         return self._parse_response(response_text, extracted_music.key_signature, reasoning_summary, debug_info)
+
+    def get_suggestions_streaming(
+        self,
+        extracted_music: ExtractedMusic,
+        profile_fingerings: Dict[str, Any],
+        image_path: Optional[str] = None
+    ) -> Generator[StreamEvent, None, None]:
+        """
+        Stream AI suggestions with real-time reasoning summary display.
+
+        Yields StreamEvent objects as the AI processes:
+        - 'reasoning_delta': Partial reasoning summary text
+        - 'text_delta': Partial output text
+        - 'complete': Final parsed response
+
+        Args:
+            extracted_music: The notes extracted from sheet music
+            profile_fingerings: Dict of available fingerings on the user's flute
+            image_path: Path to the original sheet music image for visual verification
+
+        Yields:
+            StreamEvent objects for each chunk of reasoning/text
+        """
+        # Build list of extracted notes
+        note_list = []
+        for note in extracted_music.notes:
+            note_key = f"{note.name.value}"
+            if note.accidental.value == "sharp":
+                note_key += "#"
+            elif note.accidental.value == "flat":
+                note_key += "b"
+            note_key += str(note.octave)
+            note_list.append(note_key)
+
+        # Get available notes on this flute
+        available_notes = sorted(profile_fingerings.keys())
+
+        prompt = self._build_prompt(
+            note_list,
+            available_notes,
+            extracted_music.key_signature,
+            extracted_music.title
+        )
+
+        # Build input content for Responses API
+        input_content = []
+
+        if image_path:
+            image_data = self._encode_image(image_path)
+            media_type = self._get_media_type(image_path)
+            input_content.append({
+                "type": "input_image",
+                "image_url": f"data:{media_type};base64,{image_data}"
+            })
+
+        input_content.append({
+            "type": "input_text",
+            "text": prompt
+        })
+
+        # Build request payload for debug
+        request_payload = {
+            "model": self.model,
+            "instructions": "You are a music arrangement expert specializing in Native American flute. You help adapt sheet music to work within the limited note range of these instruments while preserving the musical character of the piece.",
+            "input": [{
+                "role": "user",
+                "content": self._sanitize_input_for_debug(input_content)
+            }],
+            "reasoning": {"effort": "high", "summary": "detailed"},
+            "max_output_tokens": 4096,
+        }
+
+        # Prepare debug info
+        debug_info = {
+            "raw_response": "",
+            "model_used": self.model,
+            "input_notes": note_list,
+            "available_notes": available_notes,
+            "request": request_payload
+        }
+
+        # Collect pieces as we stream
+        reasoning_summary_parts = []
+        output_text_parts = []
+
+        try:
+            # Use the Responses API streaming interface
+            with self.client.responses.stream(
+                model=self.model,
+                instructions=request_payload["instructions"],
+                input=[{
+                    "role": "user",
+                    "content": input_content
+                }],
+                reasoning={"effort": "high", "summary": "detailed"},
+                max_output_tokens=4096,
+            ) as stream:
+                for event in stream:
+                    # Handle reasoning summary deltas
+                    if event.type == "response.reasoning_summary_text.delta":
+                        reasoning_summary_parts.append(event.delta)
+                        yield StreamEvent(type="reasoning_delta", data=event.delta)
+
+                    # Handle output text deltas
+                    elif event.type == "response.output_text.delta":
+                        output_text_parts.append(event.delta)
+                        yield StreamEvent(type="text_delta", data=event.delta)
+
+                # Get the final response
+                final_response = stream.get_final_response()
+
+            # Assemble full texts
+            full_reasoning = "".join(reasoning_summary_parts)
+            full_text = "".join(output_text_parts)
+            debug_info["raw_response"] = full_text
+
+            # Parse the final response
+            result = self._parse_response(
+                full_text,
+                extracted_music.key_signature,
+                full_reasoning if full_reasoning else None,
+                debug_info
+            )
+
+            yield StreamEvent(type="complete", data="", final_response=result)
+
+        except Exception as e:
+            yield StreamEvent(type="error", data=str(e))
 
     def _encode_image(self, image_path: str) -> str:
         """Read and base64 encode an image file."""
@@ -155,6 +305,24 @@ class AISuggestionService:
         elif ext == ".webp":
             return "image/webp"
         return "image/png"
+
+    def _sanitize_input_for_debug(self, input_content: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Sanitize input content for debug output (truncate base64 images)."""
+        sanitized = []
+        for item in input_content:
+            if item.get("type") == "input_image":
+                # Truncate long base64 data for readability
+                url = item.get("image_url", "")
+                if url.startswith("data:") and len(url) > 200:
+                    sanitized.append({
+                        "type": "input_image",
+                        "image_url": url[:100] + f"...[truncated, {len(url)} chars total]"
+                    })
+                else:
+                    sanitized.append(item)
+            else:
+                sanitized.append(item)
+        return sanitized
 
     def _build_prompt(
         self,
@@ -266,7 +434,8 @@ Return ONLY the JSON object, no other text or markdown formatting."""
                     debug_parse_error=parse_error,
                     debug_model_used=debug_info.get("model_used"),
                     debug_input_notes=debug_info.get("input_notes"),
-                    debug_available_notes=debug_info.get("available_notes")
+                    debug_available_notes=debug_info.get("available_notes"),
+                    debug_request=debug_info.get("request")
                 )
 
         # Parse note mappings
@@ -293,7 +462,8 @@ Return ONLY the JSON object, no other text or markdown formatting."""
             debug_parse_error=parse_error,
             debug_model_used=debug_info.get("model_used"),
             debug_input_notes=debug_info.get("input_notes"),
-            debug_available_notes=debug_info.get("available_notes")
+            debug_available_notes=debug_info.get("available_notes"),
+            debug_request=debug_info.get("request")
         )
 
 

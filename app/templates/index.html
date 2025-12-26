@@ -144,6 +144,23 @@
             </form>
         </div>
 
+        <!-- Streaming Reasoning Panel (for AI mode) -->
+        <div id="streaming-panel" class="card mb-3" style="display: none;">
+            <div class="streaming-header">
+                <div class="streaming-title">
+                    <span class="streaming-icon">&#129302;</span>
+                    AI Reasoning
+                </div>
+                <div class="streaming-status" id="streaming-status">
+                    <div class="spinner-small"></div>
+                    <span>Thinking...</span>
+                </div>
+            </div>
+            <div class="streaming-content" id="streaming-content">
+                <div class="streaming-text" id="streaming-text"></div>
+            </div>
+        </div>
+
         <!-- Results will be loaded here -->
         <div id="results"></div>
     </main>
@@ -280,6 +297,227 @@
                 });
             }
         });
+
+        // Streaming AI mode handling
+        const uploadForm = document.getElementById('upload-form');
+
+        uploadForm.addEventListener('submit', async function(e) {
+            const isAiMode = importModeInput.value === 'ai';
+
+            if (isAiMode) {
+                // Prevent HTMX from handling this
+                e.preventDefault();
+                e.stopPropagation();
+
+                await handleStreamingUpload();
+                return false;
+            }
+            // Otherwise, let HTMX handle standard mode
+        });
+
+        async function handleStreamingUpload() {
+            const formData = new FormData(uploadForm);
+            const streamingPanel = document.getElementById('streaming-panel');
+            const streamingText = document.getElementById('streaming-text');
+            const streamingStatus = document.getElementById('streaming-status');
+            const resultsDiv = document.getElementById('results');
+            const loadingDiv = document.getElementById('loading');
+
+            // Show streaming panel and loading
+            streamingPanel.style.display = 'block';
+            streamingText.textContent = '';
+            loadingDiv.classList.add('htmx-request');
+            resultsDiv.innerHTML = '';
+
+            // Reset and animate progress stages
+            document.querySelectorAll('.progress-stage').forEach((s, i) => {
+                s.classList.remove('active', 'complete');
+                if (i === 0) s.classList.add('active');
+            });
+
+            try {
+                const response = await fetch('/upload-stream', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+
+                    // Process complete SSE messages
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop(); // Keep incomplete line in buffer
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.slice(6));
+                                handleStreamEvent(data, streamingText, streamingStatus, resultsDiv, loadingDiv, streamingPanel);
+                            } catch (parseErr) {
+                                console.error('Parse error:', parseErr);
+                            }
+                        }
+                    }
+                }
+            } catch (err) {
+                console.error('Streaming error:', err);
+                loadingDiv.classList.remove('htmx-request');
+                resultsDiv.innerHTML = `<div class="card"><div class="empty-state"><div class="empty-icon">&#9888;&#65039;</div><h3 class="empty-title">Error: ${err.message}</h3></div></div>`;
+            }
+        }
+
+        function handleStreamEvent(event, streamingText, streamingStatus, resultsDiv, loadingDiv, streamingPanel) {
+            switch (event.type) {
+                case 'status':
+                    // Update status message
+                    streamingStatus.innerHTML = `<div class="spinner-small"></div><span>${event.data}</span>`;
+                    break;
+
+                case 'reasoning':
+                    // Append reasoning text with typewriter effect
+                    streamingText.textContent += event.data;
+                    // Auto-scroll
+                    const content = document.getElementById('streaming-content');
+                    content.scrollTop = content.scrollHeight;
+                    break;
+
+                case 'complete':
+                    // Hide loading, show results
+                    loadingDiv.classList.remove('htmx-request');
+                    document.querySelectorAll('.progress-stage').forEach(s => {
+                        s.classList.remove('active');
+                        s.classList.add('complete');
+                    });
+                    streamingStatus.innerHTML = '<span style="color: var(--success);">&#10003; Complete</span>';
+
+                    // Render the results
+                    renderAiResults(event.data, resultsDiv);
+                    break;
+
+                case 'error':
+                    loadingDiv.classList.remove('htmx-request');
+                    streamingStatus.innerHTML = `<span style="color: var(--error);">&#10007; Error</span>`;
+                    resultsDiv.innerHTML = `<div class="card"><div class="empty-state"><div class="empty-icon">&#9888;&#65039;</div><h3 class="empty-title">${event.data}</h3></div></div>`;
+                    break;
+            }
+        }
+
+        function renderAiResults(data, container) {
+            // Build results HTML dynamically
+            const playablePercent = data.note_count > 0 ? Math.round((data.playable_count / data.note_count) * 100) : 0;
+
+            let transpositionBadge = 'Original key (no transposition)';
+            if (data.transposition > 0) {
+                transpositionBadge = `Transposed +${data.transposition} semitones`;
+            } else if (data.transposition < 0) {
+                transpositionBadge = `Transposed ${data.transposition} semitones`;
+            }
+
+            let notesGrid = '';
+            if (data.results && data.results.length > 0) {
+                notesGrid = data.results.map(result => {
+                    const notPlayable = !result.playable ? 'not-playable' : '';
+                    const substituted = result.substitution_reason ? 'substituted' : '';
+                    const showOriginal = result.original !== result.suggested;
+
+                    let fingeringHtml = '';
+                    if (result.playable && result.fingering) {
+                        const circles = result.fingering.map((hole, i) => {
+                            const y = i < 3 ? (8 + i * 12) : (52 + (i - 3) * 12);
+                            return `<circle cx="12" cy="${y}" r="5" stroke="#5d4e37" stroke-width="1.5" fill="${hole ? '#5d4e37' : 'white'}"/>`;
+                        }).join('');
+                        const fingeringStr = result.fingering.map(h => h ? '●' : '○').join('');
+                        fingeringHtml = `
+                            <div class="result-diagram">
+                                <svg viewBox="0 0 24 84" width="24" height="84">
+                                    ${circles.slice(0, 3)}
+                                    <line x1="4" y1="44" x2="20" y2="44" stroke="#e5e5e5" stroke-width="1"/>
+                                    ${circles.slice(3)}
+                                </svg>
+                                <div class="result-fingering">${fingeringStr}</div>
+                            </div>`;
+                    } else {
+                        fingeringHtml = `<div class="result-missing"><span>?</span><div class="text-sm">Not mapped</div></div>`;
+                    }
+
+                    return `
+                        <div class="result-card ${notPlayable} ${substituted}">
+                            ${showOriginal ? `<div class="result-original">${result.original}</div>` : ''}
+                            <div class="result-note ${showOriginal ? 'result-suggested' : ''}">${result.suggested}</div>
+                            ${fingeringHtml}
+                            ${result.substitution_reason ? `<div class="substitution-indicator" title="${result.substitution_reason}">&#8660;</div>` : ''}
+                        </div>`;
+                }).join('');
+            }
+
+            const html = `
+                <div class="card mb-3">
+                    <div class="results-header">
+                        <div>
+                            <h2 class="results-title">${escapeHtml(data.title)}</h2>
+                            <div class="ai-badge">AI-Suggested Arrangement</div>
+                        </div>
+                        <div class="results-stats">
+                            <div class="stat">
+                                <div class="stat-value">${data.note_count}</div>
+                                <div class="stat-label">Notes</div>
+                            </div>
+                            <div class="stat">
+                                <div class="stat-value">${data.playable_count}</div>
+                                <div class="stat-label">Playable</div>
+                            </div>
+                            ${data.confidence > 0 ? `
+                            <div class="stat">
+                                <div class="stat-value">${Math.round(data.confidence * 100)}%</div>
+                                <div class="stat-label">Confidence</div>
+                            </div>` : ''}
+                        </div>
+                    </div>
+
+                    <div class="ai-transposition-info">
+                        <div class="transposition-badge">${transpositionBadge}</div>
+                        ${data.original_key && data.suggested_key ? `<div class="key-change">${data.original_key} &rarr; ${data.suggested_key}</div>` : ''}
+                    </div>
+
+                    <details class="ai-reasoning" open>
+                        <summary class="ai-reasoning-header">
+                            <span>AI Analysis</span>
+                            <span class="expand-icon">&#9660;</span>
+                        </summary>
+                        <div class="ai-reasoning-content">
+                            ${data.reasoning_summary ? `<div class="reasoning-section reasoning-process"><strong>Reasoning Process:</strong><p>${escapeHtml(data.reasoning_summary)}</p></div>` : ''}
+                            ${data.ocr_corrections ? `<div class="reasoning-section ocr-corrections"><strong>OCR Corrections:</strong><p>${escapeHtml(data.ocr_corrections)}</p></div>` : ''}
+                            ${data.transposition_reasoning ? `<div class="reasoning-section"><strong>Transposition:</strong><p>${escapeHtml(data.transposition_reasoning)}</p></div>` : ''}
+                            ${data.musical_notes ? `<div class="reasoning-section"><strong>Arrangement Notes:</strong><p>${escapeHtml(data.musical_notes)}</p></div>` : ''}
+                        </div>
+                    </details>
+
+                    ${notesGrid ? `<div class="results-grid ai-results-grid">${notesGrid}</div>` : '<div class="empty-state"><p class="empty-text">No notes could be extracted.</p></div>'}
+                </div>`;
+
+            container.innerHTML = html;
+
+            // Store data for saving
+            window.streamedSongData = data;
+        }
+
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
     </script>
 </body>
 </html>
