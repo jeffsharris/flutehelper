@@ -801,13 +801,82 @@
                         </div>
                     </details>
 
+                    ${notesGrid ? `
+                    <div class="card mb-3">
+                        <div class="results-header">
+                            <div>
+                                <h3 class="results-title">Full Fingering Sequence</h3>
+                                <p class="results-meta">Suggested notes in order with their fingerings</p>
+                            </div>
+                        </div>
+                        <div class="results-grid">${notesGrid}</div>
+                    </div>` : ''}
+
                     ${notesGrid ? `<div class="results-grid ai-results-grid">${notesGrid}</div>` : '<div class="empty-state"><p class="empty-text">No notes could be extracted.</p></div>'}
+
+                    ${notesGrid ? `
+                    <div class="mt-3" style="border-top: 1px solid var(--border); padding-top: 20px;">
+                        <div class="flex items-center justify-between gap-2" style="flex-wrap: wrap;">
+                            <div>
+                                <p class="text-muted text-sm">Save this AI-arranged version to your library</p>
+                            </div>
+                            <button onclick="saveStreamedAiSong()" class="btn btn-primary" id="save-song-btn">
+                                Save to Library
+                            </button>
+                        </div>
+                        <div id="save-song-status" class="status hidden mt-2"></div>
+                    </div>` : ''}
                 </div>`;
 
             container.innerHTML = html;
 
             // Store data for saving
             window.streamedSongData = data;
+        }
+
+        async function saveStreamedAiSong() {
+            const btn = document.getElementById('save-song-btn');
+            const status = document.getElementById('save-song-status');
+            if (!window.streamedSongData) return;
+
+            btn.disabled = true;
+            btn.textContent = 'Saving...';
+
+            try {
+                const notesData = (window.streamedSongData.results || []).map(r => ({
+                    note_key: r.suggested,
+                    fingering: r.fingering || null,
+                    original_note: r.original,
+                    substitution_reason: r.substitution_reason || null
+                }));
+
+                const res = await fetch('/api/songs', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        title: window.streamedSongData.title + ' (AI Arranged)',
+                        profile_id: window.streamedSongData.profile_id,
+                        notes: notesData,
+                        key_signature: window.streamedSongData.suggested_key,
+                        ai_arranged: true,
+                        transposition: window.streamedSongData.transposition
+                    })
+                });
+                const data = await res.json();
+
+                if (data.success) {
+                    status.textContent = 'Saved! View in Library';
+                    status.className = 'status success';
+                    btn.textContent = 'Saved';
+                } else {
+                    throw new Error(data.error || 'Failed to save');
+                }
+            } catch (err) {
+                status.textContent = 'Error: ' + err.message;
+                status.className = 'status error';
+                btn.disabled = false;
+                btn.textContent = 'Save to Library';
+            }
         }
 
         function escapeHtml(text) {
