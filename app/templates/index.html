@@ -623,6 +623,13 @@
             }
         });
 
+        window.addEventListener('beforeunload', () => {
+            if (currentStreamController) {
+                currentStreamController.abort();
+                currentStreamController = null;
+            }
+        });
+
         function handleStreamEvent(event, streamingText, streamingStatus, resultsDiv, loadingDiv, streamingPanel) {
             switch (event.type) {
                 case 'status':
