@@ -493,9 +493,13 @@
                     throw new Error(`HTTP error! status: ${response.status}`);
                 }
 
+                appendStreamingLog({ message: 'Upload received', stage: 'upload_received' }, false);
+                updateProgressStageFromStatus('upload_received');
+
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
                 let buffer = '';
+                let receivedEvent = false;
 
                 while (true) {
                     const { done, value } = await reader.read();
@@ -504,19 +508,36 @@
                     buffer += decoder.decode(value, { stream: true });
 
                     // Process complete SSE messages
-                    const lines = buffer.split('\n');
-                    buffer = lines.pop(); // Keep incomplete line in buffer
+                    const chunks = buffer.split('\n\n');
+                    buffer = chunks.pop(); // Keep incomplete chunk in buffer
 
-                    for (const line of lines) {
-                        if (line.startsWith('data: ')) {
-                            try {
-                                const data = JSON.parse(line.slice(6));
-                                handleStreamEvent(data, streamingText, streamingStatus, resultsDiv, loadingDiv, streamingPanel);
-                            } catch (parseErr) {
-                                console.error('Parse error:', parseErr);
-                            }
+                    for (const chunk of chunks) {
+                        const lines = chunk.split('\n').map(line => line.trim()).filter(Boolean);
+                        const dataLines = lines
+                            .filter(line => line.startsWith('data:'))
+                            .map(line => line.replace(/^data:\s*/, ''));
+
+                        if (!dataLines.length) {
+                            continue;
+                        }
+
+                        const dataStr = dataLines.join('\n').trim();
+                        try {
+                            const data = JSON.parse(dataStr);
+                            receivedEvent = true;
+                            handleStreamEvent(data, streamingText, streamingStatus, resultsDiv, loadingDiv, streamingPanel);
+                        } catch (parseErr) {
+                            console.error('Parse error:', parseErr, dataStr);
+                            appendDebugLog({
+                                label: 'error:parse',
+                                payload: { error: String(parseErr), raw: dataStr }
+                            });
                         }
                     }
+                }
+
+                if (!receivedEvent) {
+                    throw new Error('No streaming updates received from the server.');
                 }
             } catch (err) {
                 console.error('Streaming error:', err);

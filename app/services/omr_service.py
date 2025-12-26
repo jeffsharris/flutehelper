@@ -16,6 +16,7 @@ Usage:
     print(f"Found {len(music.notes)} notes")
 """
 
+import asyncio
 from typing import Optional
 
 from ..models.notes import ExtractedMusic
@@ -53,7 +54,8 @@ class OMRService:
             key signature, and confidence score. Returns empty
             result if extraction fails.
         """
-        result = self.ai_omr.extract_notes(image_path)
+        # Run the blocking OMR call in a worker thread so SSE updates can flush.
+        result = await asyncio.to_thread(self.ai_omr.extract_notes, image_path)
 
         if result and result.notes:
             return result
