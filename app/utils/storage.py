@@ -18,7 +18,7 @@ Functions:
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, Optional
 
 
 # Directory paths
@@ -36,7 +36,7 @@ SONGS_FILE = DATA_DIR / "songs.json"
 SETTINGS_FILE = DATA_DIR / "settings.json"
 
 
-def load_json(filepath: Path, default: dict | None = None) -> dict[str, Any]:
+def load_json(filepath: Path, default: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     Load data from a JSON file.
 
@@ -53,7 +53,7 @@ def load_json(filepath: Path, default: dict | None = None) -> dict[str, Any]:
     return default or {}
 
 
-def save_json(filepath: Path, data: dict[str, Any]) -> None:
+def save_json(filepath: Path, data: Dict[str, Any]) -> None:
     """
     Save data to a JSON file with pretty formatting.
 
@@ -69,7 +69,7 @@ def save_json(filepath: Path, data: dict[str, Any]) -> None:
 # Profiles: Store flute configurations and custom fingerings
 # ============================================================
 
-def load_profiles() -> dict[str, Any]:
+def load_profiles() -> Dict[str, Any]:
     """
     Load all flute profiles.
 
@@ -84,7 +84,7 @@ def load_profiles() -> dict[str, Any]:
     return load_json(PROFILES_FILE, {})
 
 
-def save_profiles(profiles: dict[str, Any]) -> None:
+def save_profiles(profiles: Dict[str, Any]) -> None:
     """Save all flute profiles to disk."""
     save_json(PROFILES_FILE, profiles)
 
@@ -93,7 +93,7 @@ def save_profiles(profiles: dict[str, Any]) -> None:
 # Songs: Store saved song arrangements
 # ============================================================
 
-def load_songs() -> dict[str, Any]:
+def load_songs() -> Dict[str, Any]:
     """
     Load all saved songs.
 
@@ -109,7 +109,7 @@ def load_songs() -> dict[str, Any]:
     return load_json(SONGS_FILE, {})
 
 
-def save_songs(songs: dict[str, Any]) -> None:
+def save_songs(songs: Dict[str, Any]) -> None:
     """Save all songs to disk."""
     save_json(SONGS_FILE, songs)
 
@@ -118,7 +118,7 @@ def save_songs(songs: dict[str, Any]) -> None:
 # Settings: Store application preferences
 # ============================================================
 
-def get_settings() -> dict[str, Any]:
+def get_settings() -> Dict[str, Any]:
     """
     Get application settings.
 
@@ -129,6 +129,6 @@ def get_settings() -> dict[str, Any]:
     return load_json(SETTINGS_FILE, {"last_profile": None})
 
 
-def save_settings(settings_data: dict[str, Any]) -> None:
+def save_settings(settings_data: Dict[str, Any]) -> None:
     """Save application settings to disk."""
     save_json(SETTINGS_FILE, settings_data)
