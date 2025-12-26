@@ -79,6 +79,18 @@
         </div>
         {% endif %}
 
+        <div class="card mb-3 image-preview-card" id="image-preview-card" style="display: none;">
+            <div class="image-preview-header">
+                <div>
+                    <div class="image-preview-title">Selected Score</div>
+                    <div class="image-preview-filename" id="image-preview-name"></div>
+                </div>
+            </div>
+            <div class="image-preview-body">
+                <img id="image-preview" class="image-preview-img" alt="Selected sheet music preview">
+            </div>
+        </div>
+
         <!-- Upload Section -->
         <div class="card mb-3">
             <form id="upload-form"
@@ -248,6 +260,40 @@
         const uploadArea = document.getElementById('upload-area');
         const fileNameDisplay = document.getElementById('file-name');
         const submitBtn = document.getElementById('submit-btn');
+        const previewCard = document.getElementById('image-preview-card');
+        const previewImage = document.getElementById('image-preview');
+        const previewName = document.getElementById('image-preview-name');
+        let previewUrl = null;
+
+        function updateImagePreview(file) {
+            if (!previewCard || !previewImage) return;
+
+            if (!file) {
+                previewCard.style.display = 'none';
+                previewImage.src = '';
+                previewImage.alt = 'Selected sheet music preview';
+                if (previewName) {
+                    previewName.textContent = '';
+                }
+                if (previewUrl) {
+                    URL.revokeObjectURL(previewUrl);
+                    previewUrl = null;
+                }
+                return;
+            }
+
+            if (previewUrl) {
+                URL.revokeObjectURL(previewUrl);
+            }
+
+            previewUrl = URL.createObjectURL(file);
+            previewImage.src = previewUrl;
+            previewImage.alt = `Preview of ${file.name}`;
+            if (previewName) {
+                previewName.textContent = file.name;
+            }
+            previewCard.style.display = 'block';
+        }
 
         fileInput.addEventListener('change', (e) => {
             if (e.target.files.length > 0) {
@@ -255,6 +301,9 @@
                 fileNameDisplay.textContent = 'Selected: ' + fileName;
                 fileNameDisplay.style.display = 'block';
                 submitBtn.disabled = !profileIdInput.value;
+                updateImagePreview(e.target.files[0]);
+            } else {
+                updateImagePreview(null);
             }
         });
 

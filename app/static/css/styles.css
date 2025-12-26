@@ -342,6 +342,43 @@ a:hover {
     display: none;
 }
 
+/* ===== Image Preview ===== */
+.image-preview-card {
+    overflow: hidden;
+}
+
+.image-preview-header {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--accent-light);
+}
+
+.image-preview-title {
+    font-weight: 600;
+    color: var(--primary);
+}
+
+.image-preview-filename {
+    margin-top: 4px;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+.image-preview-body {
+    padding: 12px;
+    background: var(--bg);
+}
+
+.image-preview-img {
+    width: 100%;
+    max-height: 420px;
+    object-fit: contain;
+    display: block;
+    border-radius: var(--radius-sm);
+    background: var(--card);
+    box-shadow: var(--shadow-sm);
+}
+
 /* ===== Grid Layouts ===== */
 .grid-2 {
     display: grid;
