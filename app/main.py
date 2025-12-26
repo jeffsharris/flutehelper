@@ -46,7 +46,8 @@ from pydantic import BaseModel
 
 from .config import settings
 from .services.omr_service import OMRService, OMRServiceError
-from .services.ai_suggestion import ai_suggestion_service, StreamEvent
+from .services.ai_suggestion import ai_suggestion_service, AISuggestion, NoteSuggestion
+from .models.notes import ExtractedMusic
 from .services.music_utils import (
     transpose_notes, analyze_playability, find_optimal_transposition,
     find_nearest_playable, get_key_name
@@ -323,6 +324,8 @@ async def upload_sheet_music_streaming(
     Returns Server-Sent Events (SSE) with real-time updates:
     - status: Processing stage updates
     - reasoning: AI reasoning text as it's generated
+    - omr_result: Cached sheet music extraction payload
+    - ai_result: Cached AI response payload
     - complete: Final results with all mappings
     - error: Error message if something fails
 
@@ -419,57 +422,23 @@ async def upload_sheet_music_streaming(
                     start_time,
                 ),
             )
+            yield _sse_event("omr_result", _serialize_extracted_music(extracted_music))
             yield _sse_event(
                 "status",
                 _status_payload("Starting AI arrangement...", "ai_start", start_time),
             )
 
-            # Stream AI suggestions
-            for event in ai_suggestion_service.get_suggestions_streaming(
-                extracted_music, profile_fingerings, image_path=tmp_path
+            async for payload in _stream_ai_and_mapping(
+                request=request,
+                extracted_music=extracted_music,
+                profile_fingerings=profile_fingerings,
+                profile=profile,
+                profile_id=profile_id,
+                filename=file.filename,
+                tmp_path=tmp_path,
+                start_time=start_time,
             ):
-                if await request.is_disconnected():
-                    return
-                if event.type == "status":
-                    yield _sse_event(
-                        "status",
-                        _coerce_status_payload(event.data, start_time, "ai_status"),
-                    )
-                elif event.type == "debug":
-                    yield _sse_event(
-                        "debug",
-                        _coerce_debug_payload(event.data, start_time, "ai_debug"),
-                    )
-                elif event.type == "reasoning_delta":
-                    yield _sse_event("reasoning", event.data)
-                elif event.type == "complete":
-                    yield _sse_event(
-                        "status",
-                        _status_payload("Mapping notes to fingerings...", "mapping_notes", start_time),
-                    )
-                    final_data = _build_streaming_result(
-                        event.final_response, extracted_music,
-                        profile_fingerings, profile, profile_id, file.filename
-                    )
-                    mapping_summary = _build_mapping_debug_payload(final_data)
-                    yield _sse_event(
-                        "status",
-                        _status_payload(
-                            _format_mapping_status(mapping_summary),
-                            "mapping_complete",
-                            start_time,
-                        ),
-                    )
-                    yield _sse_event(
-                        "debug",
-                        _debug_payload("Mapping summary", mapping_summary, start_time),
-                    )
-                    yield f"data: {json.dumps({'type': 'complete', 'data': final_data})}\n\n"
-                elif event.type == "error":
-                    yield _sse_event(
-                        "error",
-                        _coerce_status_payload(event.data, start_time, "ai_error"),
-                    )
+                yield payload
 
         except Exception as e:
             yield _sse_event(
@@ -490,6 +459,188 @@ async def upload_sheet_music_streaming(
     )
 
 
+@app.post("/retry-ai-stream")
+async def retry_ai_stream(
+    request: Request,
+    file: UploadFile = File(...),
+    profile_id: str = Form(...),
+    extracted_music: str = Form(...)
+):
+    """Retry AI arrangement using cached OMR data and the original image."""
+    profiles = load_profiles()
+
+    if not file.filename:
+        return _sse_error("No file provided")
+    if not file.filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+        return _sse_error("Please upload a PNG or JPG image")
+    if profile_id not in profiles:
+        return _sse_error("Please select or create a flute profile first")
+    try:
+        extracted_music_obj = _deserialize_extracted_music(extracted_music)
+    except ValueError as exc:
+        return _sse_error(str(exc))
+
+    # Save to temp file
+    suffix = Path(file.filename).suffix
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        shutil.copyfileobj(file.file, tmp)
+        tmp_path = tmp.name
+
+    async def generate():
+        start_time = time.monotonic()
+        try:
+            if await request.is_disconnected():
+                return
+            yield _sse_event(
+                "status",
+                _status_payload("Upload received", "upload_received", start_time),
+            )
+            analysis_message = _format_omr_status(extracted_music_obj)
+            yield _sse_event(
+                "status",
+                _status_payload(analysis_message, "sheet_music_analysis_complete", start_time),
+            )
+            yield _sse_event(
+                "debug",
+                _debug_payload(
+                    "OMR result (cached)",
+                    _build_omr_debug_payload(extracted_music_obj),
+                    start_time,
+                ),
+            )
+            yield _sse_event("omr_result", _serialize_extracted_music(extracted_music_obj))
+            yield _sse_event(
+                "status",
+                _status_payload("Starting AI arrangement...", "ai_start", start_time),
+            )
+
+            profile = profiles[profile_id]
+            profile_fingerings = profile.get("fingerings", {})
+
+            async for payload in _stream_ai_and_mapping(
+                request=request,
+                extracted_music=extracted_music_obj,
+                profile_fingerings=profile_fingerings,
+                profile=profile,
+                profile_id=profile_id,
+                filename=file.filename,
+                tmp_path=tmp_path,
+                start_time=start_time,
+            ):
+                yield payload
+        except Exception as exc:
+            yield _sse_event(
+                "error",
+                _status_payload(str(exc), "server_error", start_time),
+            )
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+
+@app.post("/retry-mapping-stream")
+async def retry_mapping_stream(
+    request: Request,
+    profile_id: str = Form(...),
+    extracted_music: str = Form(...),
+    ai_suggestion: str = Form(...),
+    filename: str = Form("")
+):
+    """Retry mapping notes to fingerings using cached AI response."""
+    profiles = load_profiles()
+    if profile_id not in profiles:
+        return _sse_error("Please select or create a flute profile first")
+    try:
+        extracted_music_obj = _deserialize_extracted_music(extracted_music)
+        ai_suggestion_obj = _deserialize_ai_suggestion(ai_suggestion)
+    except ValueError as exc:
+        return _sse_error(str(exc))
+
+    profile = profiles[profile_id]
+    profile_fingerings = profile.get("fingerings", {})
+
+    async def generate():
+        start_time = time.monotonic()
+        try:
+            if await request.is_disconnected():
+                return
+            yield _sse_event(
+                "status",
+                _status_payload("Reusing extracted notes...", "sheet_music_analysis_complete", start_time),
+            )
+            yield _sse_event(
+                "debug",
+                _debug_payload(
+                    "OMR result (cached)",
+                    _build_omr_debug_payload(extracted_music_obj),
+                    start_time,
+                ),
+            )
+            yield _sse_event("omr_result", _serialize_extracted_music(extracted_music_obj))
+            yield _sse_event(
+                "status",
+                _status_payload("Reusing AI response...", "model_completed", start_time),
+            )
+            yield _sse_event("ai_result", _serialize_ai_suggestion(ai_suggestion_obj))
+            yield _sse_event(
+                "status",
+                _status_payload("Mapping notes to fingerings...", "mapping_notes", start_time),
+            )
+            try:
+                final_data = _build_streaming_result(
+                    ai_suggestion_obj,
+                    extracted_music_obj,
+                    profile_fingerings,
+                    profile,
+                    profile_id,
+                    filename or (extracted_music_obj.title or "Uploaded image"),
+                )
+            except Exception as exc:
+                yield _sse_event(
+                    "error",
+                    _status_payload(f"Mapping failed: {exc}", "mapping_error", start_time),
+                )
+                return
+            mapping_summary = _build_mapping_debug_payload(final_data)
+            yield _sse_event(
+                "status",
+                _status_payload(
+                    _format_mapping_status(mapping_summary),
+                    "mapping_complete",
+                    start_time,
+                ),
+            )
+            yield _sse_event(
+                "debug",
+                _debug_payload("Mapping summary", mapping_summary, start_time),
+            )
+            yield f"data: {json.dumps({'type': 'complete', 'data': final_data})}\n\n"
+        except Exception as exc:
+            yield _sse_event(
+                "error",
+                _status_payload(str(exc), "server_error", start_time),
+            )
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+
 def _sse_event(event_type: str, data: Any) -> str:
     """Format a Server-Sent Event."""
     return f"data: {json.dumps({'type': event_type, 'data': data})}\n\n"
@@ -503,6 +654,76 @@ def _sse_error(message: str):
             _status_payload(message, "validation_error", None),
         )
     return StreamingResponse(error_gen(), media_type="text/event-stream")
+
+
+async def _stream_ai_and_mapping(
+    request: Request,
+    extracted_music: ExtractedMusic,
+    profile_fingerings: dict,
+    profile: dict,
+    profile_id: str,
+    filename: str,
+    tmp_path: str,
+    start_time: float,
+):
+    """Stream AI suggestions and mapping steps for reuse across endpoints."""
+    for event in ai_suggestion_service.get_suggestions_streaming(
+        extracted_music, profile_fingerings, image_path=tmp_path
+    ):
+        if await request.is_disconnected():
+            return
+        if event.type == "status":
+            yield _sse_event(
+                "status",
+                _coerce_status_payload(event.data, start_time, "ai_status"),
+            )
+        elif event.type == "debug":
+            yield _sse_event(
+                "debug",
+                _coerce_debug_payload(event.data, start_time, "ai_debug"),
+            )
+        elif event.type == "reasoning_delta":
+            yield _sse_event("reasoning", event.data)
+        elif event.type == "complete":
+            yield _sse_event("ai_result", _serialize_ai_suggestion(event.final_response))
+            yield _sse_event(
+                "status",
+                _status_payload("Mapping notes to fingerings...", "mapping_notes", start_time),
+            )
+            try:
+                final_data = _build_streaming_result(
+                    event.final_response,
+                    extracted_music,
+                    profile_fingerings,
+                    profile,
+                    profile_id,
+                    filename,
+                )
+            except Exception as exc:
+                yield _sse_event(
+                    "error",
+                    _status_payload(f"Mapping failed: {exc}", "mapping_error", start_time),
+                )
+                return
+            mapping_summary = _build_mapping_debug_payload(final_data)
+            yield _sse_event(
+                "status",
+                _status_payload(
+                    _format_mapping_status(mapping_summary),
+                    "mapping_complete",
+                    start_time,
+                ),
+            )
+            yield _sse_event(
+                "debug",
+                _debug_payload("Mapping summary", mapping_summary, start_time),
+            )
+            yield f"data: {json.dumps({'type': 'complete', 'data': final_data})}\n\n"
+        elif event.type == "error":
+            yield _sse_event(
+                "error",
+                _coerce_status_payload(event.data, start_time, "ai_error"),
+            )
 
 
 def _status_payload(message: str, stage: str, start_time: Optional[float]) -> dict:
@@ -581,6 +802,87 @@ def _build_omr_request_payload(tmp_path: str, filename: str) -> dict:
         "file_bytes": file_size,
         "timeout_seconds": settings.OPENAI_TIMEOUT_SECONDS,
     }
+
+
+def _serialize_extracted_music(extracted_music: ExtractedMusic) -> dict:
+    """Serialize ExtractedMusic for client-side caching."""
+    return {
+        "title": extracted_music.title,
+        "key_signature": extracted_music.key_signature,
+        "confidence": extracted_music.confidence,
+        "notes": [
+            {
+                "name": note.name.value,
+                "octave": note.octave,
+                "accidental": note.accidental.value,
+            }
+            for note in extracted_music.notes
+        ],
+    }
+
+
+def _deserialize_extracted_music(payload: str) -> ExtractedMusic:
+    """Deserialize cached ExtractedMusic payload."""
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError as exc:
+        raise ValueError("Cached sheet music data could not be parsed.") from exc
+    try:
+        return ExtractedMusic.parse_obj(data)
+    except Exception as exc:
+        raise ValueError("Cached sheet music data was invalid.") from exc
+
+
+def _serialize_ai_suggestion(ai_suggestion: AISuggestion) -> dict:
+    """Serialize AISuggestion for client-side caching."""
+    return {
+        "recommended_transposition": ai_suggestion.recommended_transposition,
+        "transposition_reasoning": ai_suggestion.transposition_reasoning,
+        "suggested_key": ai_suggestion.suggested_key,
+        "ocr_corrections": ai_suggestion.ocr_corrections,
+        "musical_notes": ai_suggestion.musical_notes,
+        "original_key": ai_suggestion.original_key,
+        "note_mappings": [
+            {
+                "original": mapping.original,
+                "transposed": mapping.transposed,
+                "suggested": mapping.suggested,
+                "playable": mapping.playable,
+                "substitution_reason": mapping.substitution_reason,
+            }
+            for mapping in ai_suggestion.note_mappings
+        ],
+    }
+
+
+def _deserialize_ai_suggestion(payload: str) -> AISuggestion:
+    """Deserialize cached AISuggestion payload."""
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError as exc:
+        raise ValueError("Cached AI response could not be parsed.") from exc
+    try:
+        note_mappings = [
+            NoteSuggestion(
+                original=item.get("original", ""),
+                transposed=item.get("transposed", item.get("original", "")),
+                suggested=item.get("suggested", item.get("transposed", "")),
+                playable=bool(item.get("playable", False)),
+                substitution_reason=item.get("substitution_reason"),
+            )
+            for item in data.get("note_mappings", [])
+        ]
+        return AISuggestion(
+            recommended_transposition=int(data.get("recommended_transposition", 0)),
+            transposition_reasoning=data.get("transposition_reasoning", ""),
+            note_mappings=note_mappings,
+            musical_notes=data.get("musical_notes", ""),
+            original_key=data.get("original_key"),
+            suggested_key=data.get("suggested_key"),
+            ocr_corrections=data.get("ocr_corrections"),
+        )
+    except Exception as exc:
+        raise ValueError("Cached AI response was invalid.") from exc
 
 
 def _build_mapping_debug_payload(result_data: dict) -> dict:

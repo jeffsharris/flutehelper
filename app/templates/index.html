@@ -175,6 +175,16 @@
             </div>
         </div>
 
+        <div id="retry-panel" class="card mb-3 retry-panel" style="display: none;">
+            <div class="retry-header">Retry steps</div>
+            <div class="retry-actions">
+                <button type="button" class="btn btn-secondary" id="retry-omr-btn">Retry Sheet Music Analysis</button>
+                <button type="button" class="btn btn-secondary" id="retry-ai-btn">Retry AI Arrangement</button>
+                <button type="button" class="btn btn-secondary" id="retry-mapping-btn">Retry Mapping</button>
+            </div>
+            <div class="retry-note" id="retry-note"></div>
+        </div>
+
         <details class="debug-section" id="streaming-debug" style="display: none;">
             <summary class="debug-header">
                 <span>Debug Log</span>
@@ -193,6 +203,10 @@
     <div id="toast" class="toast"></div>
 
     <script>
+        let cachedOcrData = null;
+        let cachedAiSuggestion = null;
+        let cachedFilename = '';
+
         // Profile selection
         const profileSelect = document.getElementById('profile-select');
         const profileIdInput = document.getElementById('profile-id-input');
@@ -200,6 +214,8 @@
         if (profileSelect) {
             profileSelect.addEventListener('change', (e) => {
                 profileIdInput.value = e.target.value;
+                cachedOcrData = null;
+                cachedAiSuggestion = null;
                 // Save as last used
                 fetch('/api/settings/last-profile', {
                     method: 'POST',
@@ -219,6 +235,11 @@
         const streamingLog = document.getElementById('streaming-log');
         const streamingDebug = document.getElementById('streaming-debug');
         const debugLog = document.getElementById('debug-log');
+        const retryPanel = document.getElementById('retry-panel');
+        const retryOcrBtn = document.getElementById('retry-omr-btn');
+        const retryAiBtn = document.getElementById('retry-ai-btn');
+        const retryMappingBtn = document.getElementById('retry-mapping-btn');
+        const retryNote = document.getElementById('retry-note');
 
         importModeRadios.forEach(radio => {
             radio.addEventListener('change', (e) => {
@@ -250,6 +271,9 @@
                     }
                     if (debugLog) {
                         debugLog.textContent = '';
+                    }
+                    if (retryPanel) {
+                        retryPanel.style.display = 'none';
                     }
                 }
             });
@@ -302,6 +326,9 @@
                 fileNameDisplay.style.display = 'block';
                 submitBtn.disabled = !profileIdInput.value;
                 updateImagePreview(e.target.files[0]);
+                cachedFilename = fileName;
+                cachedOcrData = null;
+                cachedAiSuggestion = null;
             } else {
                 updateImagePreview(null);
             }
@@ -408,6 +435,7 @@
                 upload_received: 1,
                 extracting_notes: 2,
                 sheet_music_analysis_complete: 2,
+                omr_error: 2,
                 ai_start: 3,
                 request_prepared: 3,
                 request_sent: 3,
@@ -417,8 +445,10 @@
                 response_streaming: 3,
                 parsing_response: 3,
                 model_completed: 3,
+                ai_error: 3,
                 mapping_notes: 4,
                 mapping_complete: 4,
+                mapping_error: 4,
                 complete: 4
             };
             advanceProgressStage(stageMap[stage]);
@@ -492,8 +522,61 @@
             // Otherwise, let HTMX handle standard mode
         });
 
+        if (retryOcrBtn) {
+            retryOcrBtn.addEventListener('click', async () => {
+                await handleStreamingUpload();
+            });
+        }
+        if (retryAiBtn) {
+            retryAiBtn.addEventListener('click', async () => {
+                await handleRetryAi();
+            });
+        }
+        if (retryMappingBtn) {
+            retryMappingBtn.addEventListener('click', async () => {
+                await handleRetryMapping();
+            });
+        }
+
         async function handleStreamingUpload() {
             const formData = new FormData(uploadForm);
+            cachedOcrData = null;
+            cachedAiSuggestion = null;
+            await runStreamingRequest('/upload-stream', formData);
+        }
+
+        async function handleRetryAi() {
+            if (!cachedOcrData) {
+                showToast('No cached sheet music data available.');
+                return;
+            }
+            const file = fileInput.files[0];
+            if (!file) {
+                showToast('Please reselect the original image to retry AI.');
+                return;
+            }
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('profile_id', profileIdInput.value);
+            formData.append('extracted_music', JSON.stringify(cachedOcrData));
+            cachedAiSuggestion = null;
+            await runStreamingRequest('/retry-ai-stream', formData);
+        }
+
+        async function handleRetryMapping() {
+            if (!cachedOcrData || !cachedAiSuggestion) {
+                showToast('Missing cached AI data for mapping.');
+                return;
+            }
+            const formData = new FormData();
+            formData.append('profile_id', profileIdInput.value);
+            formData.append('extracted_music', JSON.stringify(cachedOcrData));
+            formData.append('ai_suggestion', JSON.stringify(cachedAiSuggestion));
+            formData.append('filename', cachedFilename || '');
+            await runStreamingRequest('/retry-mapping-stream', formData);
+        }
+
+        async function runStreamingRequest(endpoint, formData) {
             const streamingPanel = document.getElementById('streaming-panel');
             const streamingText = document.getElementById('streaming-text');
             const streamingStatus = document.getElementById('streaming-status');
@@ -507,6 +590,9 @@
             streamingPanel.style.display = 'block';
             if (streamingDebug) {
                 streamingDebug.style.display = 'block';
+            }
+            if (retryPanel) {
+                retryPanel.style.display = 'none';
             }
             streamingText.textContent = '';
             streamingText.classList.remove('is-active', 'is-complete', 'is-error');
@@ -539,7 +625,7 @@
             currentStreamController = new AbortController();
 
             try {
-                const response = await fetch('/upload-stream', {
+                const response = await fetch(endpoint, {
                     method: 'POST',
                     body: formData,
                     signal: currentStreamController.signal
@@ -611,6 +697,7 @@
                 appendStreamingLog({ message: `Network error: ${err.message}`, stage: 'network_error' }, true);
                 appendDebugLog({ label: 'error:network_error', payload: err.message });
                 resultsDiv.innerHTML = `<div class="card"><div class="empty-state"><div class="empty-icon">&#9888;&#65039;</div><h3 class="empty-title">Error: ${escapeHtml(err.message)}</h3></div></div>`;
+                updateRetryPanel('network_error');
             } finally {
                 currentStreamController = null;
             }
@@ -676,6 +763,9 @@
                     if (!streamingText.textContent.trim()) {
                         streamingText.dataset.placeholder = 'No reasoning summary was returned.';
                     }
+                    if (retryPanel) {
+                        retryPanel.style.display = 'none';
+                    }
 
                     // Render the results
                     renderAiResults(event.data, resultsDiv);
@@ -699,10 +789,21 @@
                         streamingText.dataset.placeholder = 'Reasoning stopped due to an error.';
                     }
                     resultsDiv.innerHTML = `<div class="card"><div class="empty-state"><div class="empty-icon">&#9888;&#65039;</div><h3 class="empty-title">${escapeHtml(errorData.message)}</h3></div></div>`;
+                    updateRetryPanel(errorData.stage);
                     break;
 
                 case 'debug':
                     appendDebugLog(normalizeDebugData(event.data));
+                    break;
+
+                case 'omr_result':
+                    cachedOcrData = event.data;
+                    appendDebugLog({ label: 'omr_result', payload: event.data });
+                    break;
+
+                case 'ai_result':
+                    cachedAiSuggestion = event.data;
+                    appendDebugLog({ label: 'ai_result', payload: event.data });
                     break;
             }
         }
@@ -804,6 +905,49 @@
             const nextBlock = payloadText ? `${header}\n${payloadText}\n` : `${header}\n`;
             debugLog.textContent += nextBlock + '\n';
             debugLog.scrollTop = debugLog.scrollHeight;
+        }
+
+        function updateRetryPanel(stage) {
+            if (!retryPanel) return;
+            const hasFile = fileInput.files && fileInput.files.length > 0;
+            const canAi = Boolean(cachedOcrData && hasFile);
+            const canMapping = Boolean(cachedOcrData && cachedAiSuggestion);
+
+            retryOcrBtn.disabled = !hasFile;
+            retryAiBtn.disabled = !canAi;
+            retryMappingBtn.disabled = !canMapping;
+
+            if (stage === 'omr_error' || stage === 'validation_error') {
+                retryAiBtn.style.display = 'none';
+                retryMappingBtn.style.display = 'none';
+                retryOcrBtn.style.display = 'inline-flex';
+            } else if (stage === 'ai_error') {
+                retryOcrBtn.style.display = 'inline-flex';
+                retryAiBtn.style.display = 'inline-flex';
+                retryMappingBtn.style.display = 'none';
+            } else if (stage === 'mapping_error') {
+                retryOcrBtn.style.display = 'inline-flex';
+                retryAiBtn.style.display = 'inline-flex';
+                retryMappingBtn.style.display = 'inline-flex';
+            } else {
+                retryOcrBtn.style.display = 'inline-flex';
+                retryAiBtn.style.display = 'inline-flex';
+                retryMappingBtn.style.display = 'inline-flex';
+            }
+
+            let note = '';
+            if (!hasFile) {
+                note = 'Select the original image to retry this step.';
+            } else if (!cachedOcrData) {
+                note = 'Sheet music analysis data is not available yet.';
+            } else if (!cachedAiSuggestion) {
+                note = 'AI arrangement data is not available yet.';
+            }
+            if (retryNote) {
+                retryNote.textContent = note;
+            }
+
+            retryPanel.style.display = 'block';
         }
 
         function renderAiResults(data, container) {

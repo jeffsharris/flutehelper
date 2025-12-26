@@ -33,7 +33,6 @@ Usage:
 """
 
 import json
-import re
 from dataclasses import dataclass
 from typing import Any, Dict, Generator, List, Optional
 
@@ -61,7 +60,6 @@ class StreamEvent:
         type: Event type - one of:
             - 'status': Step-level progress update
             - 'reasoning_delta': Chunk of reasoning summary text
-            - 'text_delta': Chunk of output text (JSON response)
             - 'debug': Debug payload for logging
             - 'complete': Final parsed response ready
             - 'error': Error occurred during processing
@@ -148,7 +146,7 @@ while preserving the musical character of the piece."""
 REASONING_CONFIG = {"effort": "medium", "summary": "detailed"}
 
 # Max visible output tokens
-MAX_OUTPUT_TOKENS = 4096
+MAX_OUTPUT_TOKENS = 16000
 
 # JSON schema for structured output
 AI_SUGGESTION_SCHEMA = {
@@ -317,7 +315,6 @@ class AISuggestionService:
             StreamEvent objects:
             - type='status': Step-level progress update
             - type='reasoning_delta': Partial reasoning text
-            - type='text_delta': Partial output text (usually not displayed)
             - type='debug': Debug payload for logging
             - type='complete': Final parsed AISuggestion
             - type='error': Error message if something fails
@@ -341,7 +338,6 @@ class AISuggestionService:
 
         # Collect streamed content
         reasoning_parts: List[str] = []
-        text_parts: List[str] = []
         status_emitted: set[str] = set()
         saw_reasoning = False
         saw_output = False
@@ -404,8 +400,6 @@ class AISuggestionService:
                             )
                             if status:
                                 yield status
-                        text_parts.append(event.delta)
-                        yield StreamEvent(type="text_delta", data=event.delta)
                     elif event.type in ("response.failed", "response.incomplete", "response.error"):
                         yield StreamEvent(type="error", data=self._format_stream_error(event))
                         return
@@ -417,9 +411,7 @@ class AISuggestionService:
             full_reasoning = "".join(reasoning_parts) or self._extract_reasoning_summary(
                 final_response
             )
-            full_text = "".join(text_parts)
-            if not full_text:
-                full_text = self._get_output_text(final_response) or ""
+            full_text = self._get_output_text(final_response) or ""
             debug_info["raw_response"] = full_text
 
             yield StreamEvent(
@@ -442,6 +434,22 @@ class AISuggestionService:
             result = self._parse_response(
                 full_text, extracted_music.key_signature, full_reasoning, debug_info
             )
+            if result.debug_parse_error:
+                yield StreamEvent(
+                    type="debug",
+                    data={"label": "AI parse error", "payload": result.debug_parse_error},
+                )
+                yield StreamEvent(
+                    type="error",
+                    data=f"Could not parse AI response: {result.debug_parse_error}",
+                )
+                return
+            if not result.note_mappings:
+                yield StreamEvent(
+                    type="error",
+                    data="AI response contained no note mappings. Please try again.",
+                )
+                return
             yield StreamEvent(type="complete", data="", final_response=result)
 
         except Exception as e:
@@ -712,14 +720,6 @@ Return ONLY the JSON object, no other text or markdown formatting."""
             data = json.loads(text)
         except json.JSONDecodeError as e:
             parse_error = f"JSON decode error: {e}"
-            # Try to extract JSON object from mixed content
-            json_match = re.search(r'\{.*\}', text, re.DOTALL)
-            if json_match:
-                try:
-                    data = json.loads(json_match.group())
-                    parse_error = None  # Successfully recovered
-                except json.JSONDecodeError as e2:
-                    parse_error = f"JSON extraction failed: {e2}"
 
         if data is None:
             return self._create_fallback_response(
