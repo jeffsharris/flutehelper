@@ -156,6 +156,10 @@
                     <span>Thinking...</span>
                 </div>
             </div>
+            <div class="streaming-progress">
+                <div class="streaming-progress-title">Progress Log</div>
+                <div class="streaming-log" id="streaming-log"></div>
+            </div>
             <div class="streaming-content" id="streaming-content">
                 <div class="streaming-text" id="streaming-text"></div>
             </div>
@@ -300,6 +304,8 @@
 
         // Streaming AI mode handling
         const uploadForm = document.getElementById('upload-form');
+        let streamStart = null;
+        let streamingStages = new Set();
 
         uploadForm.addEventListener('submit', async function(e) {
             const isAiMode = importModeInput.value === 'ai';
@@ -322,10 +328,16 @@
             const streamingStatus = document.getElementById('streaming-status');
             const resultsDiv = document.getElementById('results');
             const loadingDiv = document.getElementById('loading');
+            const streamingLog = document.getElementById('streaming-log');
 
             // Show streaming panel and loading
             streamingPanel.style.display = 'block';
             streamingText.textContent = '';
+            if (streamingLog) {
+                streamingLog.innerHTML = '';
+            }
+            streamStart = performance.now();
+            streamingStages = new Set();
             loadingDiv.classList.add('htmx-request');
             resultsDiv.innerHTML = '';
 
@@ -381,7 +393,10 @@
             switch (event.type) {
                 case 'status':
                     // Update status message
-                    streamingStatus.innerHTML = `<div class="spinner-small"></div><span>${event.data}</span>`;
+                    const statusData = normalizeStatusData(event.data);
+                    const elapsed = resolveElapsed(statusData.elapsed_ms);
+                    streamingStatus.innerHTML = `<div class="spinner-small"></div><span>${escapeHtml(statusData.message)}${elapsed ? ` (${elapsed})` : ''}</span>`;
+                    appendStreamingLog(statusData, false);
                     break;
 
                 case 'reasoning':
@@ -400,6 +415,7 @@
                         s.classList.add('complete');
                     });
                     streamingStatus.innerHTML = '<span style="color: var(--success);">&#10003; Complete</span>';
+                    appendStreamingLog({ message: 'Complete', stage: 'complete' }, false);
 
                     // Render the results
                     renderAiResults(event.data, resultsDiv);
@@ -407,10 +423,75 @@
 
                 case 'error':
                     loadingDiv.classList.remove('htmx-request');
-                    streamingStatus.innerHTML = `<span style="color: var(--error);">&#10007; Error</span>`;
-                    resultsDiv.innerHTML = `<div class="card"><div class="empty-state"><div class="empty-icon">&#9888;&#65039;</div><h3 class="empty-title">${event.data}</h3></div></div>`;
+                    const errorData = normalizeStatusData(event.data);
+                    const errorElapsed = resolveElapsed(errorData.elapsed_ms);
+                    streamingStatus.innerHTML = `<span style="color: var(--error);">&#10007; Error${errorElapsed ? ` (${errorElapsed})` : ''}</span>`;
+                    appendStreamingLog(errorData, true);
+                    resultsDiv.innerHTML = `<div class="card"><div class="empty-state"><div class="empty-icon">&#9888;&#65039;</div><h3 class="empty-title">${escapeHtml(errorData.message)}</h3></div></div>`;
                     break;
             }
+        }
+
+        function normalizeStatusData(data) {
+            if (typeof data === 'string') {
+                return { message: data, stage: 'status' };
+            }
+            if (!data || typeof data !== 'object') {
+                return { message: 'Status update', stage: 'status' };
+            }
+            return {
+                message: data.message || 'Status update',
+                stage: data.stage || 'status',
+                elapsed_ms: data.elapsed_ms
+            };
+        }
+
+        function resolveElapsed(elapsedMs) {
+            if (typeof elapsedMs === 'number') {
+                return formatElapsed(elapsedMs);
+            }
+            if (streamStart !== null) {
+                return formatElapsed(performance.now() - streamStart);
+            }
+            return '';
+        }
+
+        function formatElapsed(ms) {
+            const seconds = Math.max(0, ms) / 1000;
+            if (seconds < 60) {
+                return `+${seconds.toFixed(1)}s`;
+            }
+            const minutes = Math.floor(seconds / 60);
+            const remainder = (seconds % 60).toFixed(1).padStart(4, '0');
+            return `+${minutes}:${remainder}s`;
+        }
+
+        function appendStreamingLog(data, isError) {
+            const streamingLog = document.getElementById('streaming-log');
+            if (!streamingLog) return;
+
+            if (data.stage && streamingStages.has(data.stage) && !isError) {
+                return;
+            }
+            if (data.stage && !isError) {
+                streamingStages.add(data.stage);
+            }
+
+            const item = document.createElement('div');
+            item.className = `streaming-log-item${isError ? ' error' : ''}`;
+
+            const timeSpan = document.createElement('span');
+            timeSpan.className = 'streaming-log-time';
+            timeSpan.textContent = resolveElapsed(data.elapsed_ms);
+
+            const messageSpan = document.createElement('span');
+            messageSpan.className = 'streaming-log-message';
+            messageSpan.textContent = data.message;
+
+            item.appendChild(timeSpan);
+            item.appendChild(messageSpan);
+            streamingLog.appendChild(item);
+            streamingLog.scrollTop = streamingLog.scrollHeight;
         }
 
         function renderAiResults(data, container) {
@@ -433,17 +514,21 @@
 
                     let fingeringHtml = '';
                     if (result.playable && result.fingering) {
-                        const circles = result.fingering.map((hole, i) => {
-                            const y = i < 3 ? (8 + i * 12) : (52 + (i - 3) * 12);
+                        const upperCircles = result.fingering.slice(0, 3).map((hole, i) => {
+                            const y = 8 + i * 12;
                             return `<circle cx="12" cy="${y}" r="5" stroke="#5d4e37" stroke-width="1.5" fill="${hole ? '#5d4e37' : 'white'}"/>`;
-                        }).join('');
+                        });
+                        const lowerCircles = result.fingering.slice(3).map((hole, i) => {
+                            const y = 52 + i * 12;
+                            return `<circle cx="12" cy="${y}" r="5" stroke="#5d4e37" stroke-width="1.5" fill="${hole ? '#5d4e37' : 'white'}"/>`;
+                        });
                         const fingeringStr = result.fingering.map(h => h ? '●' : '○').join('');
                         fingeringHtml = `
                             <div class="result-diagram">
                                 <svg viewBox="0 0 24 84" width="24" height="84">
-                                    ${circles.slice(0, 3)}
+                                    ${upperCircles.join('')}
                                     <line x1="4" y1="44" x2="20" y2="44" stroke="#e5e5e5" stroke-width="1"/>
-                                    ${circles.slice(3)}
+                                    ${lowerCircles.join('')}
                                 </svg>
                                 <div class="result-fingering">${fingeringStr}</div>
                             </div>`;

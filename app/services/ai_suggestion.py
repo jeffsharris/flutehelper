@@ -37,6 +37,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Dict, Generator, List, Optional
 
+import openai
 from openai import OpenAI
 
 from ..config import settings
@@ -58,15 +59,16 @@ class StreamEvent:
 
     Attributes:
         type: Event type - one of:
+            - 'status': Step-level progress update
             - 'reasoning_delta': Chunk of reasoning summary text
             - 'text_delta': Chunk of output text (JSON response)
             - 'complete': Final parsed response ready
             - 'error': Error occurred during processing
-        data: Event payload (text chunk or error message)
+        data: Event payload (text chunk, status dict, or error message)
         final_response: Complete AISuggestion (only for 'complete' type)
     """
     type: str
-    data: str
+    data: Any
     final_response: Optional['AISuggestion'] = None
 
 
@@ -144,6 +146,51 @@ while preserving the musical character of the piece."""
 # Reasoning configuration - use medium effort for balance of quality and speed
 REASONING_CONFIG = {"effort": "medium", "summary": "detailed"}
 
+# Max visible output tokens
+MAX_OUTPUT_TOKENS = 4096
+
+# JSON schema for structured output
+AI_SUGGESTION_SCHEMA = {
+    "name": "ai_suggestion",
+    "schema": {
+        "type": "object",
+        "properties": {
+            "recommended_transposition": {"type": "integer"},
+            "transposition_reasoning": {"type": "string"},
+            "suggested_key": {"type": ["string", "null"]},
+            "ocr_corrections": {"type": ["string", "null"]},
+            "note_mappings": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "original": {"type": "string"},
+                        "transposed": {"type": "string"},
+                        "suggested": {"type": "string"},
+                        "playable": {"type": "boolean"},
+                        "substitution_reason": {"type": ["string", "null"]},
+                    },
+                    "required": ["original", "transposed", "suggested", "playable"],
+                    "additionalProperties": False,
+                },
+            },
+            "musical_notes": {"type": "string"},
+        },
+        "required": [
+            "recommended_transposition",
+            "transposition_reasoning",
+            "suggested_key",
+            "ocr_corrections",
+            "note_mappings",
+            "musical_notes",
+        ],
+        "additionalProperties": False,
+    },
+    "strict": True,
+}
+
+TEXT_FORMAT = {"format": {"type": "json_schema", "json_schema": AI_SUGGESTION_SCHEMA}}
+
 
 # ============================================================
 # Service Class
@@ -169,7 +216,11 @@ class AISuggestionService:
         Args:
             api_key: OpenAI API key. If not provided, uses settings.OPENAI_API_KEY
         """
-        self.client = OpenAI(api_key=api_key or settings.OPENAI_API_KEY)
+        self.client = OpenAI(
+            api_key=api_key or settings.OPENAI_API_KEY,
+            timeout=settings.OPENAI_TIMEOUT_SECONDS,
+            max_retries=0,
+        )
         self.model = settings.OPENAI_MODEL
 
     def get_suggestions(
@@ -197,16 +248,30 @@ class AISuggestionService:
         available_notes = sorted(profile_fingerings.keys())
         prompt = self._build_prompt(note_list, available_notes, extracted_music)
         input_content = self._build_input_content(prompt, image_path)
+        request_params = self._build_request_params(input_content)
         request_payload = self._build_request_payload(input_content)
 
-        # Call the API
-        response = self.client.responses.create(
-            model=self.model,
-            instructions=SYSTEM_INSTRUCTIONS,
-            input=[{"role": "user", "content": input_content}],
-            reasoning=REASONING_CONFIG,
-            max_output_tokens=4096,
-        )
+        # Build debug info
+        debug_info = {
+            "raw_response": "",
+            "model_used": self.model,
+            "input_notes": note_list,
+            "available_notes": available_notes,
+            "request": request_payload,
+        }
+
+        try:
+            # Call the API
+            response = self.client.responses.create(**request_params)
+        except Exception as exc:
+            error_message = self._format_error_message(exc)
+            debug_info["raw_response"] = ""
+            return self._create_fallback_response(
+                extracted_music.key_signature,
+                reasoning_summary=None,
+                parse_error=error_message,
+                debug_info=debug_info,
+            )
 
         # Extract reasoning summary
         reasoning_summary = self._extract_reasoning_summary(response)
@@ -215,13 +280,7 @@ class AISuggestionService:
         response_text = response.output_text or ""
 
         # Build debug info
-        debug_info = {
-            "raw_response": response_text,
-            "model_used": self.model,
-            "input_notes": note_list,
-            "available_notes": available_notes,
-            "request": request_payload,
-        }
+        debug_info["raw_response"] = response_text
 
         return self._parse_response(
             response_text, extracted_music.key_signature, reasoning_summary, debug_info
@@ -246,6 +305,7 @@ class AISuggestionService:
 
         Yields:
             StreamEvent objects:
+            - type='status': Step-level progress update
             - type='reasoning_delta': Partial reasoning text
             - type='text_delta': Partial output text (usually not displayed)
             - type='complete': Final parsed AISuggestion
@@ -256,6 +316,7 @@ class AISuggestionService:
         available_notes = sorted(profile_fingerings.keys())
         prompt = self._build_prompt(note_list, available_notes, extracted_music)
         input_content = self._build_input_content(prompt, image_path)
+        request_params = self._build_request_params(input_content)
         request_payload = self._build_request_payload(input_content)
 
         # Debug info (updated as we stream)
@@ -270,30 +331,81 @@ class AISuggestionService:
         # Collect streamed content
         reasoning_parts: List[str] = []
         text_parts: List[str] = []
+        status_emitted: set[str] = set()
+        saw_reasoning = False
+        saw_output = False
 
         try:
-            with self.client.responses.stream(
-                model=self.model,
-                instructions=SYSTEM_INSTRUCTIONS,
-                input=[{"role": "user", "content": input_content}],
-                reasoning=REASONING_CONFIG,
-                max_output_tokens=4096,
-            ) as stream:
+            status = self._build_status_event(
+                "request_prepared", "Prepared AI request", status_emitted
+            )
+            if status:
+                yield status
+
+            status = self._build_status_event(
+                "request_sent", "Request sent to model", status_emitted
+            )
+            if status:
+                yield status
+
+            with self.client.responses.stream(**request_params) as stream:
                 for event in stream:
-                    if event.type == "response.reasoning_summary_text.delta":
+                    if event.type in ("response.created", "response.in_progress"):
+                        status = self._build_status_event(
+                            "model_processing", "Model is processing", status_emitted
+                        )
+                        if status:
+                            yield status
+                    elif event.type == "response.completed":
+                        status = self._build_status_event(
+                            "model_completed", "Model completed response", status_emitted
+                        )
+                        if status:
+                            yield status
+                    elif event.type == "response.reasoning_summary_text.delta":
+                        if not saw_reasoning:
+                            saw_reasoning = True
+                            status = self._build_status_event(
+                                "reasoning_streaming",
+                                "Receiving reasoning summary",
+                                status_emitted,
+                            )
+                            if status:
+                                yield status
                         reasoning_parts.append(event.delta)
                         yield StreamEvent(type="reasoning_delta", data=event.delta)
                     elif event.type == "response.output_text.delta":
+                        if not saw_output:
+                            saw_output = True
+                            status = self._build_status_event(
+                                "response_streaming",
+                                "Receiving response JSON",
+                                status_emitted,
+                            )
+                            if status:
+                                yield status
                         text_parts.append(event.delta)
                         yield StreamEvent(type="text_delta", data=event.delta)
+                    elif event.type in ("response.failed", "response.incomplete", "response.error"):
+                        error_message = "AI response was interrupted. Please try again."
+                        yield StreamEvent(type="error", data=error_message)
+                        return
 
                 # Get final response for any additional data
-                stream.get_final_response()
+                final_response = stream.get_final_response()
 
             # Assemble complete texts
-            full_reasoning = "".join(reasoning_parts) or None
+            full_reasoning = "".join(reasoning_parts) or self._extract_reasoning_summary(
+                final_response
+            )
             full_text = "".join(text_parts)
             debug_info["raw_response"] = full_text
+
+            status = self._build_status_event(
+                "parsing_response", "Parsing AI response", status_emitted
+            )
+            if status:
+                yield status
 
             # Parse and yield final result
             result = self._parse_response(
@@ -302,7 +414,7 @@ class AISuggestionService:
             yield StreamEvent(type="complete", data="", final_response=result)
 
         except Exception as e:
-            yield StreamEvent(type="error", data=str(e))
+            yield StreamEvent(type="error", data=self._format_error_message(e))
 
     # ============================================================
     # Private Helper Methods
@@ -338,17 +450,25 @@ class AISuggestionService:
         content.append({"type": "input_text", "text": prompt})
         return content
 
+    def _build_request_params(
+        self, input_content: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Build request parameters for the API call."""
+        return {
+            "model": self.model,
+            "instructions": SYSTEM_INSTRUCTIONS,
+            "input": [{"role": "user", "content": input_content}],
+            "reasoning": REASONING_CONFIG,
+            "max_output_tokens": MAX_OUTPUT_TOKENS,
+            "text": TEXT_FORMAT,
+        }
+
     def _build_request_payload(
         self, input_content: List[Dict[str, Any]]
     ) -> Dict[str, Any]:
         """Build request payload for debug logging (with truncated images)."""
-        return {
-            "model": self.model,
-            "instructions": SYSTEM_INSTRUCTIONS,
-            "input": [{"role": "user", "content": self._sanitize_for_debug(input_content)}],
-            "reasoning": REASONING_CONFIG,
-            "max_output_tokens": 4096,
-        }
+        sanitized = self._sanitize_for_debug(input_content)
+        return self._build_request_params(sanitized)
 
     def _sanitize_for_debug(
         self, input_content: List[Dict[str, Any]]
@@ -377,6 +497,30 @@ class AISuggestionService:
                 if texts:
                     return "\n".join(texts)
         return None
+
+    def _build_status_event(
+        self, stage: str, message: str, status_emitted: set[str]
+    ) -> Optional[StreamEvent]:
+        """Build a status event only once per stage."""
+        if stage in status_emitted:
+            return None
+        status_emitted.add(stage)
+        return StreamEvent(type="status", data={"stage": stage, "message": message})
+
+    def _format_error_message(self, exc: Exception) -> str:
+        """Return a user-facing error message for OpenAI failures."""
+        if hasattr(openai, "APITimeoutError") and isinstance(exc, openai.APITimeoutError):
+            return (
+                f"AI request timed out after {settings.OPENAI_TIMEOUT_SECONDS}s. "
+                "Please try again."
+            )
+        if hasattr(openai, "RateLimitError") and isinstance(exc, openai.RateLimitError):
+            return "AI request was rate limited. Please try again in a moment."
+        if hasattr(openai, "APIConnectionError") and isinstance(exc, openai.APIConnectionError):
+            return "Could not connect to the AI service. Please check your connection and try again."
+        if hasattr(openai, "APIError") and isinstance(exc, openai.APIError):
+            return "AI service returned an error. Please try again."
+        return f"AI request failed: {exc}"
 
     def _build_prompt(
         self,

@@ -78,7 +78,11 @@ class AIVisionOMR:
         Args:
             api_key: OpenAI API key. If not provided, uses settings.OPENAI_API_KEY
         """
-        self.client = OpenAI(api_key=api_key or settings.OPENAI_API_KEY)
+        self.client = OpenAI(
+            api_key=api_key or settings.OPENAI_API_KEY,
+            timeout=settings.OPENAI_TIMEOUT_SECONDS,
+            max_retries=0,
+        )
         self.model = settings.OPENAI_MODEL
 
     def extract_notes(self, image_path: str) -> ExtractedMusic:

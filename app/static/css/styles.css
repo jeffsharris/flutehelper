@@ -1562,6 +1562,54 @@ a:hover {
     color: var(--text-muted);
 }
 
+.streaming-progress {
+    margin-bottom: 12px;
+}
+
+.streaming-progress-title {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+}
+
+.streaming-log {
+    max-height: 140px;
+    overflow-y: auto;
+    background: #f7f3ed;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 8px 10px;
+}
+
+.streaming-log-item {
+    display: flex;
+    gap: 10px;
+    font-size: 0.85rem;
+    color: var(--text);
+    padding: 4px 0;
+    border-bottom: 1px dashed rgba(0, 0, 0, 0.06);
+}
+
+.streaming-log-item:last-child {
+    border-bottom: none;
+}
+
+.streaming-log-item.error {
+    color: var(--error);
+}
+
+.streaming-log-time {
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+    min-width: 54px;
+}
+
+.streaming-log-message {
+    flex: 1;
+}
+
 .streaming-content {
     max-height: 200px;
     overflow-y: auto;

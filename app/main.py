@@ -31,10 +31,11 @@ Routes:
 import json
 import shutil
 import tempfile
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import FastAPI, File, Request, UploadFile, Form
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
@@ -350,32 +351,62 @@ async def upload_sheet_music_streaming(
 
     async def generate():
         """Generate SSE events as AI processes the request."""
+        start_time = time.monotonic()
         try:
-            yield _sse_event("status", "Extracting notes from image...")
+            yield _sse_event(
+                "status",
+                _status_payload("Upload received", "upload_received", start_time),
+            )
+            yield _sse_event(
+                "status",
+                _status_payload("Extracting notes from image...", "extracting_notes", start_time),
+            )
             extracted_music = await omr_service.process_image(tmp_path)
 
             profile = profiles[profile_id]
             profile_fingerings = profile.get("fingerings", {})
 
-            yield _sse_event("status", "AI is analyzing the arrangement...")
+            yield _sse_event(
+                "status",
+                _status_payload("Notes extracted", "notes_extracted", start_time),
+            )
+            yield _sse_event(
+                "status",
+                _status_payload("Starting AI arrangement...", "ai_start", start_time),
+            )
 
             # Stream AI suggestions
             for event in ai_suggestion_service.get_suggestions_streaming(
                 extracted_music, profile_fingerings, image_path=tmp_path
             ):
-                if event.type == "reasoning_delta":
+                if event.type == "status":
+                    yield _sse_event(
+                        "status",
+                        _coerce_status_payload(event.data, start_time, "ai_status"),
+                    )
+                elif event.type == "reasoning_delta":
                     yield _sse_event("reasoning", event.data)
                 elif event.type == "complete":
+                    yield _sse_event(
+                        "status",
+                        _status_payload("Mapping notes to fingerings...", "mapping_notes", start_time),
+                    )
                     final_data = _build_streaming_result(
                         event.final_response, extracted_music,
                         profile_fingerings, profile, profile_id, file.filename
                     )
                     yield f"data: {json.dumps({'type': 'complete', 'data': final_data})}\n\n"
                 elif event.type == "error":
-                    yield _sse_event("error", event.data)
+                    yield _sse_event(
+                        "error",
+                        _coerce_status_payload(event.data, start_time, "ai_error"),
+                    )
 
         except Exception as e:
-            yield _sse_event("error", str(e))
+            yield _sse_event(
+                "error",
+                _status_payload(str(e), "server_error", start_time),
+            )
         finally:
             Path(tmp_path).unlink(missing_ok=True)
 
@@ -390,7 +421,7 @@ async def upload_sheet_music_streaming(
     )
 
 
-def _sse_event(event_type: str, data: str) -> str:
+def _sse_event(event_type: str, data: Any) -> str:
     """Format a Server-Sent Event."""
     return f"data: {json.dumps({'type': event_type, 'data': data})}\n\n"
 
@@ -398,8 +429,33 @@ def _sse_event(event_type: str, data: str) -> str:
 def _sse_error(message: str):
     """Return an SSE error response."""
     async def error_gen():
-        yield _sse_event("error", message)
+        yield _sse_event(
+            "error",
+            _status_payload(message, "validation_error", None),
+        )
     return StreamingResponse(error_gen(), media_type="text/event-stream")
+
+
+def _status_payload(message: str, stage: str, start_time: Optional[float]) -> dict:
+    """Build a consistent status payload with elapsed time."""
+    elapsed_ms = 0
+    if start_time is not None:
+        elapsed_ms = int((time.monotonic() - start_time) * 1000)
+    return {"message": message, "stage": stage, "elapsed_ms": elapsed_ms}
+
+
+def _coerce_status_payload(data: Any, start_time: float, default_stage: str) -> dict:
+    """Normalize status payloads and attach elapsed time."""
+    if isinstance(data, dict):
+        payload = dict(data)
+    else:
+        payload = {"message": str(data)}
+
+    if "message" not in payload:
+        payload["message"] = str(data)
+    payload.setdefault("stage", default_stage)
+    payload["elapsed_ms"] = int((time.monotonic() - start_time) * 1000)
+    return payload
 
 
 def _build_streaming_result(ai_suggestion, extracted_music, profile_fingerings,
